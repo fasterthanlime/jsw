@@ -1,7 +1,10 @@
 * {
+  font-family: Sans;
+}
+
+html, body {
   margin: 0;
   padding: 0;
-  font-family: Sans;
 }
 
 html {
@@ -10,12 +13,12 @@ html {
 }
 
 html, body {
+  overflow: hidden;
   height: 100%;
 }
 
 body {
-  width: 60em;
-  padding: 3px;
+  width: 90%;
   margin-left: auto;
   margin-right: auto;
 }
@@ -33,15 +36,39 @@ body {
   border: 1px solid grey;
   padding: 2pt;
   width: 100%;
-  margin: 5pt;
   opacity: 0.8;
   border-radius: 4px;
+  margin-top: 10pt;
 }
 
 #source, #preview {
   background-color: white;
-  margin: 1 1em;
-  height: 45%;
+  width: 46%;
+  height: 80%;
+}
+
+#source::selection {
+  background-color: black;
+}
+
+#preview {
+  float: right;
+  margin-right: auto;
+}
+
+#topbar {
+  width: 100%;
+  text-align: right;
+}
+
+#topbar a {
+  color: #ccc;
+  text-decoration: normal;
+}
+
+#topbar a:hover {
+  color: white;
+  text-decoration: underline;
 }
 
 .unsaved {

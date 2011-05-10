@@ -39,12 +39,24 @@ var jsw = {
     }
   },
   
+  /* Store username/passwords in cookies. Yes, that's way insecure. You were warned. */
+  login: function () {
+    $.cookie("jsw_username", $("#username").val(), { path: '/', expires: 1 });
+    $.cookie("jsw_password", $("#password").val(), { path: '/', expires: 1 });
+    $("#coords").css("display", "none");
+    $("#source").focus();
+  },
+  
   /* Render the source for preview */
   render: function () {
     var source = $("#source").val();
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
     var html = window.markdown.toHTML(source);
     $("#preview").html(html);
+    $('#preview a[href^="' + jsw.admin_root + '"]').css('color', 'red').click(function () {
+      jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
+      return false;
+    });
   },
   
   /* Render the source for upload */
@@ -63,25 +75,22 @@ var jsw = {
   goto: function (page) {
     $("#url").val(page);
     $("#source").attr("disabled", true);
-    document.title = page;
-    window.history.pushState({
-      "html": document.innerHTML,
-      "pageTitle": page
-    }, "", jsw.admin_root + page);
+    
+    if(jsw.page() != page) {
+      document.title = page;
+      window.history.pushState({
+        "html": document.innerHTML,
+        "pageTitle": page
+      }, "", jsw.admin_root + page);
+    }
     
     $.ajax({
       type: "GET",
       dataType: "jsonp text",
       url: jsw.backend + "get/" + jsw.page() + ".md",
-      data: {
-        host: jsw.http_host
-      },
-      success: function (data) {
-        $("#source").val(data);
-      },
-      error: function () {
-        $("#source").val("");
-      },
+      data: { host: jsw.http_host },
+      success: function (data) { $("#source").val(data); },
+      error  : function ()     { $("#source").val("");   },
       complete: function () {
         jsw.saved_version = $("#source").val();
         $("#source").attr("disabled", false);
@@ -105,10 +114,10 @@ var jsw = {
     
     $.ajax({
       type: "GET",
-      url: jsw.backend + "put/" + jsw.ftp_directory + jsw.page() + ".htm",
+      url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".htm",
       dataType: "jsonp text",
       data: {
-        host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : $("#preview").html()
+        host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : jsw.final_render()
       },
       complete: function () {
         if (done == 1) {
@@ -120,7 +129,7 @@ var jsw = {
     });
     $.ajax({
       type: "GET",
-      url: jsw.gateway + "put/" + jsw.ftp_directory + jsw.page() + ".md",
+      url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".md",
       dataType: "jsonp text",
       data: {
         host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : $("#source").val()
@@ -140,6 +149,18 @@ var jsw = {
 };
 
 $(function() {
+  window.onpopstate = function (event) {
+    jsw.goto(jsw.page());
+  };
+  
+  // login window hacks
+  function resizeWindow(e) {
+    var newWindowHeight = $(window).height();
+    $("#coords").css("margin-top", (newWindowHeight / 2 - 120) + "px");
+  }
+  resizeWindow();
+  $(window).bind("resize", resizeWindow);
+  
   // ctrl shortcuts hack
   $.ctrl = function(key, callback, args) {
       $(document).keydown(function(e) {
@@ -163,7 +184,7 @@ $(function() {
   // Ctrl+L = focus URL bar
   $.ctrl('L', function() { $("#url").focus().select(); });
   
-  // 
+  // navigation
   $("#url").keydown(function (ev) {
       if (ev.which == 13) {
         jsw.goto($("#url").val());
@@ -177,30 +198,31 @@ $(function() {
   });
   
   $("#password").keydown(function (ev) {
-      if (ev.which == 13) {
-          $.cookie("jsw_username", $("#username").val(), { path: '/', expires: 1 });
-          $.cookie("jsw_password", $("#password").val(), { path: '/', expires: 1 });
-          $("#coords").css("display", "none");
-          $("#source").focus();
-          return false;
-      }
+    if (ev.which == 13) {
+      jsw.login();
+      return false;
+    }
   });
   
   $("#source").keyup(function (ev) {
-      jsw.updateClean();
+    jsw.updateClean();
   });
   
-  function resizeWindow(e) {
-    var newWindowHeight = $(window).height();
-    $("#coords").css("margin-top", (newWindowHeight / 2 - 120) + "px");
-  }
-  resizeWindow();
-  $(window).bind("resize", resizeWindow);
+  // logout
+  $("#logout").click(function () {
+    $("#coords").css("display", "block")
+    $("#password").val("");
+    $("#username").val("").focus();
+    return false;
+  });
   
   if($.cookie("jsw_username") != null) {
+    // auto-login
     $("#username").val($.cookie("jsw_username"));
-    $("#password").val($.cookie("jsw_password")).focus();
+    $("#password").val($.cookie("jsw_password"));
+    jsw.login();
   } else {
+    // saves time!
     $("#username").focus();
   }
 })
