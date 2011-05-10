@@ -43,18 +43,27 @@ BY YOUR USE OF JSW. I HOPE THAT'S CLEAR.
 
 ### Serving
 
-For the frontend, just serve the project's directory with Apache or nginx, and configure
+For the admin frontend, just serve the project's directory with Apache or nginx, and configure
 URL rewriting so that every subpath is served via index.htm
 
 Here's a sample nginx configuration that works well for me:
 
-    location /wiki/ {
+    location /admin/ {
       if (!-f $request_filename) {
-        rewrite ^/wiki/(.*)$ /wiki/index.htm break;
+        rewrite ^/admin/(.*)$ /admin/index.htm break;
       }
     }
     
 A similar Apache configuration can be obtained via a .htaccess and mod_rewrite
+
+For the user frontend, here's a sample .htaccess used to serve pages without .htm:
+
+    RewriteEngine on
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME}\.htm -f
+    RewriteRule ^(.*)$ $1.htm
+    
+A similar nginx configuration can be used
 
 For the backend, if you want to run it locally, just launch `ruby app.rb` - it
 will listen on http://localhost:4567/ by default.
