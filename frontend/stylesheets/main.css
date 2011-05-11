@@ -9,7 +9,7 @@ html, body {
 
 html {
   background-color: #222;
-  background: url("/jsw-frontend/images/dark-sunset.jpg") repeat scroll center center transparent;
+  background: url("/jsw/frontend/images/dark-sunset.jpg") repeat scroll center center transparent;
 }
 
 html, body {
@@ -39,6 +39,10 @@ body {
   opacity: 0.8;
   border-radius: 4px;
   margin-top: 10pt;
+}
+
+.loading {
+  background: url("/jsw/frontend/images/ajax-loader.gif") no-repeat scroll center center white;
 }
 
 #source, #preview {
@@ -93,5 +97,3 @@ li {
   box-shadow: inset 0 0 3px grey;
   font-size: 16pt;
 }
-
-

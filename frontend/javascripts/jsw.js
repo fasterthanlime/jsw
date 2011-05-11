@@ -1,4 +1,3 @@
-
 var jsw = {    
   /* SFTP host you want to upload HTML files to */
   ftp_host: "ftp.jrcfoto.com",
@@ -7,13 +6,13 @@ var jsw = {
   ftp_directory: "public_html/subdomains/amoswenger.com/",
   
   /* access path for the administration interface (page editing) */
-  admin_root: "http://localhost/admin/",
+  admin_root: "http://amoswenger.com/admin/",
   
   /* HTTP host where the actual site is running */
-  http_host: "http://amoswenger.com",
+  http_host: "http://amoswenger.com/",
   
   /* Address of the remote filesystem backend */
-  backend: "http://localhost:4567/",
+  backend: "http://jsw-backend.heroku.com/",
   
   /* Last version of the source we loaded from or sent to the server */
   saved_version: "",
@@ -57,9 +56,12 @@ var jsw = {
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
     var html = window.markdown.toHTML(source);
     $("#preview").html(html);
-    $('#preview a[href^="' + jsw.admin_root + '"]').css('color', 'red').click(function () {
-      jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
-      return false;
+    $('#preview a[href^="' + jsw.admin_root + '"]').css('color', 'red').click(function (e) {
+      if(e.button == 0 && !e.ctrlKey) {
+        // on left button clicks, load in-app. still allow middle clicks to open new tabs
+	jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
+        return false;
+      }
     });
   },
   
@@ -127,14 +129,13 @@ var jsw = {
     
   /* Save the current page, sends modifications to the backend */
   save: function () {
-    $("#url input").appendTo('<span id="status">saving...</span>');
-    $("#source").attr("disabled", true);
+    $("#source").attr("disabled", true).addClass('loading');
     jsw.saved_version = $("#source").val();
     var done = 0;
     
     var finish = function () {
       $("#save").html('save').attr("disabled", false);
-      $("#source").attr("disabled", false);
+      $("#source").removeClass('loading');
     }
     
     var page_path = jsw.page()
