@@ -10,7 +10,7 @@ var jsw = {
   admin_root: "http://localhost/admin/",
   
   /* HTTP host where the actual site is running */
-  http_host: "amoswenger.com",
+  http_host: "http://amoswenger.com",
   
   /* Address of the remote filesystem backend */
   backend: "http://localhost:4567/",
@@ -93,11 +93,27 @@ var jsw = {
       page_path += '.md';
     }
     
+    /*
     $.ajax({
       type: "GET",
       dataType: "jsonp text",
       url: jsw.backend + "get/" + page_path,
       data: { host: jsw.http_host },
+      success: function (data) { $("#source").val(data); },
+      error  : function ()     { $("#source").val("");   },
+      complete: function () {
+        jsw.saved_version = $("#source").val();
+        $("#source").attr("disabled", false);
+        jsw.updateClean();
+        jsw.render();
+      }
+    });
+    */
+    
+    $.ajax({
+      type: "GET",
+      dataType: "text",
+      url: jsw.http_host + "/" + page_path,
       success: function (data) { $("#source").val(data); },
       error  : function ()     { $("#source").val("");   },
       complete: function () {
