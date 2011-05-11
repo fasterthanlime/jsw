@@ -52,12 +52,12 @@ var jsw = {
   render: function () {
     var source = jsw.getSource();
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
-    var html = window.markdown.toHTML(source);
+    var html = jsw.converter.makeHtml(source);
     $("#preview").html(html);
     $('#preview a[href^="' + jsw.admin_root + '"]').css('color', 'red').click(function (e) {
       if(e.button == 0 && !e.ctrlKey) {
         // on left button clicks, load in-app. still allow middle clicks to open new tabs
-	jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
+        jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
         return false;
       }
     });
@@ -67,7 +67,7 @@ var jsw = {
   final_render: function () {
     var source = jsw.getSource();
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1]($1)");
-    return jsw.header + window.markdown.toHTML(source) + jsw.footer;
+    return jsw.header + jsw.converter.makeHtml(source) + jsw.footer;
   },
   
   /* Return current page path, based on current URL */
@@ -163,6 +163,9 @@ var jsw = {
 };
 
 $(function() {
+    // markdown
+    jsw.converter = new Showdown.converter();
+  
     // ace editor integration
     jsw.editor = ace.edit('source');
     jsw.session = jsw.editor.getSession();
