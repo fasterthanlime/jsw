@@ -2,7 +2,6 @@ require 'rubygems'
 require 'sinatra'
 require 'stringio'
 require 'net/sftp'
-require 'net/http'
 
 get '/sftp/put/*' do
   puts "host: #{params[:host]}, username: #{params[:username]}, password: #{params[:password]}"
@@ -18,16 +17,3 @@ get '/sftp/put/*' do
   end
   "#{params[:callback]}(#{"Success".dump})"
 end
-
-get '/get/*' do
-  resp = ""
-  puts "host = #{params[:host]}, url = #{params[:splat]}"
-  Net::HTTP.start(params[:host]) { |http|
-    get = http.get("/" + params[:splat][0])
-    if get.code == '200'
-      resp = params[:callback] + '("' + get.body.gsub('"', '\\"').gsub("\n", '\\n') + '")'
-    end
-  }
-  resp
-end
-
