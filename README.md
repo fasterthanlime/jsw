@@ -48,11 +48,12 @@ URL rewriting so that every subpath is served via index.htm
 
 Here's a sample nginx configuration that works well for me:
 
-    location /admin/ {
-      if (!-f $request_filename) {
-        rewrite ^/admin/(.*)$ /admin/index.htm break;
-      }
-    }
+  location / {
+    root   html;
+    index  index.html index.htm;
+
+    rewrite ^/admin/(.*)$ /jsw-frontend/index.htm break;
+	}
     
 A similar Apache configuration can be obtained via a .htaccess and mod_rewrite
 

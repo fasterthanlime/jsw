@@ -7,7 +7,7 @@ var jsw = {
   ftp_directory: "public_html/subdomains/amoswenger.com/",
   
   /* access path for the administration interface (page editing) */
-  admin_root: "http://localhost/jsw-frontend/",
+  admin_root: "http://localhost/admin/",
   
   /* HTTP host where the actual site is running */
   http_host: "amoswenger.com",
@@ -20,6 +20,10 @@ var jsw = {
   
   /* false if we have unsaved changes we might lose when  */
   clean: true,
+  
+  /* TODO: make it modular */
+  header: '<!DOCTYPE html><html><head><link rel="stylesheet" href="/stylesheets/main.css"></head><body><div id="content">',
+  footer: '</div><div id="footer">powered by <a href="https://github.com/nddrylliog/jsw">jsw</a></div></body></html>',
   
   /* Compare last saved version with current, update 'unsaved' status and render */
   updateClean: function () {
@@ -63,7 +67,7 @@ var jsw = {
   final_render: function () {
     var source = $("#source").val();
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1]($1)");
-    return window.markdown.toHTML(source);
+    return jsw.header + window.markdown.toHTML(source) + jsw.footer;
   },
   
   /* Return current page path, based on current URL */
@@ -84,10 +88,15 @@ var jsw = {
       }, "", jsw.admin_root + page);
     }
     
+    var page_path = jsw.page()
+    if(page_path.indexOf('.') == -1) {
+      page_path += '.md';
+    }
+    
     $.ajax({
       type: "GET",
       dataType: "jsonp text",
-      url: jsw.backend + "get/" + jsw.page() + ".md",
+      url: jsw.backend + "get/" + page_path,
       data: { host: jsw.http_host },
       success: function (data) { $("#source").val(data); },
       error  : function ()     { $("#source").val("");   },
@@ -112,36 +121,43 @@ var jsw = {
       $("#source").attr("disabled", false);
     }
     
-    $.ajax({
-      type: "GET",
-      url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".htm",
-      dataType: "jsonp text",
-      data: {
-        host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : jsw.final_render()
-      },
-      complete: function () {
-        if (done == 1) {
-          finish();
-        } else {
-          done++;
+    var page_path = jsw.page()
+    if(page_path.indexOf('.') == -1) {
+      $.ajax({
+        type: "GET",
+        url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".htm",
+        dataType: "jsonp text",
+        data: {
+          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : jsw.final_render()
+        },
+        complete: function () {
+          if (done == 1) { finish(); } else { done++; }
         }
-      }
-    });
-    $.ajax({
-      type: "GET",
-      url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".md",
-      dataType: "jsonp text",
-      data: {
-        host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : $("#source").val()
-      },
-      complete: function () {
-        if (done == 1) {
-          finish();
-        } else {
-          done++;
+      });
+      
+      $.ajax({
+        type: "GET",
+        url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".md",
+        dataType: "jsonp text",
+        data: {
+          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : $("#source").val()
+        },
+        complete: function () {
+          if (done == 1) { finish(); } else { done++; }
         }
-      }
-    });
+      });
+    } else {
+      $.ajax({
+        type: "GET",
+        url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page(),
+        dataType: "jsonp text",
+        data: {
+          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : $("#source").val()
+        },
+        complete: function () { finish(); }
+      });
+    }
+    
     jsw.clean = true;
     $("#url").removeClass("unsaved");
     $("#source").attr("disabled", false);
