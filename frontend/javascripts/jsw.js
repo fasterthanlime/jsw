@@ -48,25 +48,33 @@ var jsw = {
     $("#source").focus();
   },
   
+  isMarkdown: function () {
+    return (jsw.page().indexOf('.') == -1);
+  },
+  
   /* Render the source for preview */
   render: function () {
     var source = jsw.getSource();
-    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
-    var html = jsw.converter.makeHtml(source);
-    $("#preview").html(html);
-    $('#preview a[href^="' + jsw.admin_root + '"]').css('color', 'red').click(function (e) {
-      if(e.button == 0 && !e.ctrlKey) {
-        // on left button clicks, load in-app. still allow middle clicks to open new tabs
-        jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
-        return false;
-      }
-    });
+    if(jsw.isMarkdown()) {
+      source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
+      var html = jsw.converter.makeHtml(source);
+      $("#preview").html(html);
+      $('#preview a[href^="' + jsw.admin_root + '"]').css('color', 'red').click(function (e) {
+        if(e.button == 0 && !e.ctrlKey) {
+          // on left button clicks, load in-app. still allow middle clicks to open new tabs
+          jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
+          return false;
+        }
+      });
+    } else {
+      $('#preview').html("<pre>" + jsw.getSource() + "</pre>");
+    }
   },
   
   /* Render the source for upload */
   final_render: function () {
     var source = jsw.getSource();
-    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1]($1)");
+    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](/$1)");
     return jsw.header + jsw.converter.makeHtml(source) + jsw.footer;
   },
   
