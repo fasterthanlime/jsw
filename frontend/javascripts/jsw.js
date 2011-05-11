@@ -26,9 +26,7 @@ var jsw = {
   
   /* Compare last saved version with current, update 'unsaved' status and render */
   updateClean: function () {
-    $source = $("#source");
-    
-    if($source.val() == jsw.saved_version) {
+    if(jsw.getSource() == jsw.saved_version) {
       if(!jsw.clean) {
         jsw.clean = true;
         $("#url").removeClass("unsaved");
@@ -52,7 +50,7 @@ var jsw = {
   
   /* Render the source for preview */
   render: function () {
-    var source = $("#source").val();
+    var source = jsw.getSource();
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
     var html = window.markdown.toHTML(source);
     $("#preview").html(html);
@@ -67,7 +65,7 @@ var jsw = {
   
   /* Render the source for upload */
   final_render: function () {
-    var source = $("#source").val();
+    var source = jsw.getSource();
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1]($1)");
     return jsw.header + window.markdown.toHTML(source) + jsw.footer;
   },
@@ -95,31 +93,14 @@ var jsw = {
       page_path += '.md';
     }
     
-    /*
-    $.ajax({
-      type: "GET",
-      dataType: "jsonp text",
-      url: jsw.backend + "get/" + page_path,
-      data: { host: jsw.http_host },
-      success: function (data) { $("#source").val(data); },
-      error  : function ()     { $("#source").val("");   },
-      complete: function () {
-        jsw.saved_version = $("#source").val();
-        $("#source").attr("disabled", false);
-        jsw.updateClean();
-        jsw.render();
-      }
-    });
-    */
-    
     $.ajax({
       type: "GET",
       dataType: "text",
       url: jsw.http_host + "/" + page_path,
-      success: function (data) { $("#source").val(data); },
-      error  : function ()     { $("#source").val("");   },
+      success: function (data) { jsw.setSource(data); },
+      error  : function ()     { jsw.setSource("");   },
       complete: function () {
-        jsw.saved_version = $("#source").val();
+        jsw.saved_version = jsw.getSource();
         $("#source").attr("disabled", false);
         jsw.updateClean();
         jsw.render();
@@ -130,7 +111,7 @@ var jsw = {
   /* Save the current page, sends modifications to the backend */
   save: function () {
     $("#source").attr("disabled", true).addClass('loading');
-    jsw.saved_version = $("#source").val();
+    jsw.saved_version = jsw.getSource();
     var done = 0;
     
     var finish = function () {
@@ -157,7 +138,7 @@ var jsw = {
         url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".md",
         dataType: "jsonp text",
         data: {
-          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : $("#source").val()
+          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : jsw.getSource()
         },
         complete: function () {
           if (done == 1) { finish(); } else { done++; }
@@ -169,7 +150,7 @@ var jsw = {
         url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page(),
         dataType: "jsonp text",
         data: {
-          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : $("#source").val()
+          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : jsw.getSource()
         },
         complete: function () { finish(); }
       });
@@ -182,80 +163,90 @@ var jsw = {
 };
 
 $(function() {
-  window.onpopstate = function (event) {
-    jsw.goto(jsw.page());
-  };
-  
-  // login window hacks
-  function resizeWindow(e) {
-    var newWindowHeight = $(window).height();
-    $("#coords").css("margin-top", (newWindowHeight / 2 - 120) + "px");
-  }
-  resizeWindow();
-  $(window).bind("resize", resizeWindow);
-  
-  // ctrl shortcuts hack
-  $.ctrl = function(key, callback, args) {
-      $(document).keydown(function(e) {
-          if(!args) args=[]; // IE barks when args is null
-          if(e.keyCode == key.charCodeAt(0) && e.ctrlKey) {
-              callback.apply(this, args);
-              return false;
-          }
-      });
-  };
-  
-  if(jsw.page().length == 0) {
-      jsw.goto("index");
-  } else {
+    // ace editor integration
+    jsw.editor = ace.edit('source');
+    jsw.session = jsw.editor.getSession();
+    jsw.session.setUseWrapMode(true);
+    jsw.session.on('change', jsw.updateClean);
+        
+    jsw.setSource = function (value) {
+      jsw.session.setValue(value);
+    }
+    
+    jsw.getSource = function () {
+      return jsw.session.getValue();
+    }
+    
+    window.onpopstate = function (event) {
       jsw.goto(jsw.page());
-  }
-  
-  // Ctrl+S = save
-  $.ctrl('S', jsw.save);
-  
-  // Ctrl+L = focus URL bar
-  $.ctrl('L', function() { $("#url").focus().select(); });
-  
-  // navigation
-  $("#url").keydown(function (ev) {
+    };
+    
+    // login window hacks
+    function resizeWindow(e) {
+      var newWindowHeight = $(window).height();
+      $("#coords").css("margin-top", (newWindowHeight / 2 - 120) + "px");
+    }
+    resizeWindow();
+    $(window).bind("resize", resizeWindow);
+    
+    // ctrl shortcuts hack
+    $.ctrl = function(key, callback, args) {
+        $(document).keydown(function(e) {
+            if(!args) args=[]; // IE barks when args is null
+            if(e.keyCode == key.charCodeAt(0) && e.ctrlKey) {
+                callback.apply(this, args);
+                return false;
+            }
+        });
+    };
+    
+    if(jsw.page().length == 0) {
+        jsw.goto("index");
+    } else {
+        jsw.goto(jsw.page());
+    }
+    
+    // Ctrl+S = save
+    $.ctrl('S', jsw.save);
+    
+    // Ctrl+L = focus URL bar
+    $.ctrl('L', function() { $("#url").focus().select(); });
+    
+    // navigation
+    $("#url").keydown(function (ev) {
+        if (ev.which == 13) {
+          jsw.goto($("#url").val());
+        }
+    });
+    
+    $("#username").keydown(function (ev) {
       if (ev.which == 13) {
-        jsw.goto($("#url").val());
+        $("#password").focus();
       }
-  });
-  
-  $("#username").keydown(function (ev) {
-    if (ev.which == 13) {
-      $("#password").focus();
-    }
-  });
-  
-  $("#password").keydown(function (ev) {
-    if (ev.which == 13) {
-      jsw.login();
+    });
+    
+    $("#password").keydown(function (ev) {
+      if (ev.which == 13) {
+        jsw.login();
+        return false;
+      }
+    });
+    
+    // logout
+    $("#logout").click(function () {
+      $("#coords").css("display", "block")
+      $("#password").val("");
+      $("#username").val("").focus();
       return false;
+    });
+    
+    if($.cookie("jsw_username") != null) {
+      // auto-login
+      $("#username").val($.cookie("jsw_username"));
+      $("#password").val($.cookie("jsw_password"));
+      jsw.login();
+    } else {
+      // saves time!
+      $("#username").focus();
     }
-  });
-  
-  $("#source").keyup(function (ev) {
-    jsw.updateClean();
-  });
-  
-  // logout
-  $("#logout").click(function () {
-    $("#coords").css("display", "block")
-    $("#password").val("");
-    $("#username").val("").focus();
-    return false;
-  });
-  
-  if($.cookie("jsw_username") != null) {
-    // auto-login
-    $("#username").val($.cookie("jsw_username"));
-    $("#password").val($.cookie("jsw_password"));
-    jsw.login();
-  } else {
-    // saves time!
-    $("#username").focus();
-  }
-})
+});

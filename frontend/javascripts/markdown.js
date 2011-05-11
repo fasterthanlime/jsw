@@ -1,1452 +1,1283 @@
-// Released under MIT license
-// Copyright (c) 2009-2010 Dominic Baggott
-// Copyright (c) 2009-2010 Ash Berlin
+//
+// showdown.js -- A javascript port of Markdown.
+//
+// Copyright (c) 2007 John Fraser.
+//
+// Original Markdown Copyright (c) 2004-2005 John Gruber
+//   <http://daringfireball.net/projects/markdown/>
+//
+// Redistributable under a BSD-style open source license.
+// See license.txt for more information.
+//
+// The full source distribution is at:
+//
+//				A A L
+//				T C A
+//				T K B
+//
+//   <http://www.attacklab.net/>
+//
+
+//
+// Wherever possible, Showdown is a straight, line-by-line port
+// of the Perl version of Markdown.
+//
+// This is not a normal parser design; it's basically just a
+// series of string substitutions.  It's hard to read and
+// maintain this way,  but keeping Showdown close to the original
+// design makes it easier to port new features.
+//
+// More importantly, Showdown behaves like markdown.pl in most
+// edge cases.  So web applications can do client-side preview
+// in Javascript, and then build identical HTML on the server.
+//
+// This port needs the new RegExp functionality of ECMA 262,
+// 3rd Edition (i.e. Javascript 1.5).  Most modern web browsers
+// should do fine.  Even with the new regular expression features,
+// We do a lot of work to emulate Perl's regex functionality.
+// The tricky changes in this file mostly have the "attacklab:"
+// label.  Major or self-explanatory changes don't.
+//
+// Smart diff tools like Araxis Merge will be able to match up
+// this file with markdown.pl in a useful way.  A little tweaking
+// helps: in a copy of markdown.pl, replace "#" with "//" and
+// replace "$text" with "text".  Be sure to ignore whitespace
+// and line endings.
+//
+
+
+//
+// Showdown usage:
+//
+//   var text = "Markdown *rocks*.";
+//
+//   var markdown = require("markdown");
+//   var html = markdown.encode(text);
+//
+//   print(html);
+//
+// Note: move the sample code to the bottom of this
+// file before uncommenting it.
+//
+
+
+//
+// Globals:
+//
+
+// Global hashes, used by various utility routines
+var g_urls;
+var g_titles;
+var g_html_blocks;
+
+// Used to track when we're inside an ordered or unordered list
+// (see _ProcessListItems() for details):
+var g_list_level = 0;
+
+
+exports.makeHtml = function(text) {
+//
+// Main function. The order in which other subs are called here is
+// essential. Link and image substitutions need to happen before
+// _EscapeSpecialCharsWithinTagAttributes(), so that any *'s or _'s in the <a>
+// and <img> tags get encoded.
+//
+
+	// Clear the global hashes. If we don't clear these, you get conflicts
+	// from other articles when generating a page which contains more than
+	// one article (e.g. an index page that shows the N most recent
+	// articles):
+	g_urls = new Array();
+	g_titles = new Array();
+	g_html_blocks = new Array();
+
+	// attacklab: Replace ~ with ~T
+	// This lets us use tilde as an escape char to avoid md5 hashes
+	// The choice of character is arbitray; anything that isn't
+    // magic in Markdown will work.
+	text = text.replace(/~/g,"~T");
+
+	// attacklab: Replace $ with ~D
+	// RegExp interprets $ as a special character
+	// when it's in a replacement string
+	text = text.replace(/\$/g,"~D");
 
-(function( expose ) {
+	// Standardize line endings
+	text = text.replace(/\r\n/g,"\n"); // DOS to Unix
+	text = text.replace(/\r/g,"\n"); // Mac to Unix
 
-/**
- *  class Markdown
- *
- *  Markdown processing in Javascript done right. We have very particular views
- *  on what constitutes 'right' which include:
- *
- *  - produces well-formed HTML (this means that em and strong nesting is
- *    important)
- *
- *  - has an intermediate representation to allow processing of parsed data (We
- *    in fact have two, both as [JsonML]: a markdown tree and an HTML tree).
- *
- *  - is easily extensible to add new dialects without having to rewrite the
- *    entire parsing mechanics
- *
- *  - has a good test suite
- *
- *  This implementation fulfills all of these (except that the test suite could
- *  do with expanding to automatically run all the fixtures from other Markdown
- *  implementations.)
- *
- *  ##### Intermediate Representation
- *
- *  *TODO* Talk about this :) Its JsonML, but document the node names we use.
- *
- *  [JsonML]: http://jsonml.org/ "JSON Markup Language"
- **/
-var Markdown = expose.Markdown = function Markdown(dialect) {
-  switch (typeof dialect) {
-    case "undefined":
-      this.dialect = Markdown.dialects.Gruber;
-      break;
-    case "object":
-      this.dialect = dialect;
-      break;
-    default:
-      if (dialect in Markdown.dialects) {
-        this.dialect = Markdown.dialects[dialect];
-      }
-      else {
-        throw new Error("Unknown Markdown dialect '" + String(dialect) + "'");
-      }
-      break;
-  }
-  this.em_state = [];
-  this.strong_state = [];
-  this.debug_indent = "";
-}
+	// Make sure text begins and ends with a couple of newlines:
+	text = "\n\n" + text + "\n\n";
 
-/**
- *  parse( markdown, [dialect] ) -> JsonML
- *  - markdown (String): markdown string to parse
- *  - dialect (String | Dialect): the dialect to use, defaults to gruber
- *
- *  Parse `markdown` and return a markdown document as a Markdown.JsonML tree.
- **/
-expose.parse = function( source, dialect ) {
-  // dialect will default if undefined
-  var md = new Markdown( dialect );
-  return md.toTree( source );
-}
+	// Convert all tabs to spaces.
+	text = _Detab(text);
 
-/**
- *  toHTML( markdown, [dialect]  ) -> String
- *  toHTML( md_tree ) -> String
- *  - markdown (String): markdown string to parse
- *  - md_tree (Markdown.JsonML): parsed markdown tree
- *
- *  Take markdown (either as a string or as a JsonML tree) and run it through
- *  [[toHTMLTree]] then turn it into a well-formated HTML fragment.
- **/
-expose.toHTML = function toHTML( source , dialect ) {
-  var input = expose.toHTMLTree( source , dialect );
+	// Strip any lines consisting only of spaces and tabs.
+	// This makes subsequent regexen easier to write, because we can
+	// match consecutive blank lines with /\n+/ instead of something
+	// contorted like /[ \t]*\n+/ .
+	text = text.replace(/^[ \t]+$/mg,"");
 
-  return expose.renderJsonML( input );
-}
+	// Turn block-level HTML blocks into hash entries
+	text = _HashHTMLBlocks(text);
 
-/**
- *  toHTMLTree( markdown, [dialect] ) -> JsonML
- *  toHTMLTree( md_tree ) -> JsonML
- *  - markdown (String): markdown string to parse
- *  - dialect (String | Dialect): the dialect to use, defaults to gruber
- *  - md_tree (Markdown.JsonML): parsed markdown tree
- *
- *  Turn markdown into HTML, represented as a JsonML tree. If a string is given
- *  to this function, it is first parsed into a markdown tree by calling
- *  [[parse]].
- **/
-expose.toHTMLTree = function toHTMLTree( input, dialect ) {
-  // convert string input to an MD tree
-  if ( typeof input ==="string" ) input = this.parse( input, dialect );
+	// Strip link definitions, store in hashes.
+	text = _StripLinkDefinitions(text);
 
-  // Now convert the MD tree to an HTML tree
+	text = _RunBlockGamut(text);
 
-  // remove references from the tree
-  var attrs = extract_attr( input ),
-      refs = {};
+	text = _UnescapeSpecialChars(text);
 
-  if ( attrs && attrs.references ) {
-    refs = attrs.references;
-  }
+	// attacklab: Restore dollar signs
+	text = text.replace(/~D/g,"$$");
 
-  var html = convert_tree_to_html( input, refs );
-  merge_text_nodes( html );
-  return html;
-}
+	// attacklab: Restore tildes
+	text = text.replace(/~T/g,"~");
 
-var mk_block = Markdown.mk_block = function(block, trail, line) {
-  // Be helpful for default case in tests.
-  if ( arguments.length == 1 ) trail = "\n\n";
-
-  var s = new String(block);
-  s.trailing = trail;
-  // To make it clear its not just a string
-  s.toSource = function() {
-    return "Markdown.mk_block( " +
-            uneval(block) +
-            ", " +
-            uneval(trail) +
-            ", " +
-            uneval(line) +
-            " )"
-  }
-
-  if (line != undefined)
-    s.lineNumber = line;
-
-  return s;
-}
-
-function count_lines( str ) {
-  var n = 0, i = -1;;
-  while ( ( i = str.indexOf('\n', i+1) ) != -1) n++;
-  return n;
-}
-
-// Internal - split source into rough blocks
-Markdown.prototype.split_blocks = function splitBlocks( input, startLine ) {
-  // [\s\S] matches _anything_ (newline or space)
-  var re = /([\s\S]+?)($|\n(?:\s*\n|$)+)/g,
-      blocks = [],
-      m;
-
-  var line_no = 1;
-
-  if ( ( m = (/^(\s*\n)/)(input) ) != null ) {
-    // skip (but count) leading blank lines
-    line_no += count_lines( m[0] );
-    re.lastIndex = m[0].length;
-  }
-
-  while ( ( m = re(input) ) != null ) {
-    blocks.push( mk_block( m[1], m[2], line_no ) );
-    line_no += count_lines( m[0] );
-  }
-
-  return blocks;
-}
-
-/**
- *  Markdown#processBlock( block, next ) -> undefined | [ JsonML, ... ]
- *  - block (String): the block to process
- *  - next (Array): the following blocks
- *
- * Process `block` and return an array of JsonML nodes representing `block`.
- *
- * It does this by asking each block level function in the dialect to process
- * the block until one can. Succesful handling is indicated by returning an
- * array (with zero or more JsonML nodes), failure by a false value.
- *
- * Blocks handlers are responsible for calling [[Markdown#processInline]]
- * themselves as appropriate.
- *
- * If the blocks were split incorrectly or adjacent blocks need collapsing you
- * can adjust `next` in place using shift/splice etc.
- *
- * If any of this default behaviour is not right for the dialect, you can
- * define a `__call__` method on the dialect that will get invoked to handle
- * the block processing.
- */
-Markdown.prototype.processBlock = function processBlock( block, next ) {
-  var cbs = this.dialect.block,
-      ord = cbs.__order__;
-
-  if ( "__call__" in cbs ) {
-    return cbs.__call__.call(this, block, next);
-  }
-
-  for ( var i = 0; i < ord.length; i++ ) {
-    //D:this.debug( "Testing", ord[i] );
-    var res = cbs[ ord[i] ].call( this, block, next );
-    if ( res ) {
-      //D:this.debug("  matched");
-      if ( !res instanceof Array || ( res.length > 0 && !( res[0] instanceof Array ) ) )
-        this.debug(ord[i], "didn't return a proper array");
-      //D:this.debug( "" );
-      return res;
-    }
-  }
-
-  // Uhoh! no match! Should we throw an error?
-  return [];
-}
-
-Markdown.prototype.processInline = function processInline( block ) {
-  return this.dialect.inline.__call__.call( this, String( block ) );
-}
-
-/**
- *  Markdown#toTree( source ) -> JsonML
- *  - source (String): markdown source to parse
- *
- *  Parse `source` into a JsonML tree representing the markdown document.
- **/
-// custom_tree means set this.tree to `custom_tree` and restore old value on return
-Markdown.prototype.toTree = function toTree( source, custom_root ) {
-  var blocks = source instanceof Array
-             ? source
-             : this.split_blocks( source );
-
-  // Make tree a member variable so its easier to mess with in extensions
-  var old_tree = this.tree;
-  try {
-    this.tree = custom_root || this.tree || [ "markdown" ];
-
-    blocks:
-    while ( blocks.length ) {
-      var b = this.processBlock( blocks.shift(), blocks );
-
-      // Reference blocks and the like won't return any content
-      if ( !b.length ) continue blocks;
-
-      this.tree.push.apply( this.tree, b );
-    }
-    return this.tree;
-  }
-  finally {
-    if ( custom_root )
-      this.tree = old_tree;
-  }
-
-}
-
-// Noop by default
-Markdown.prototype.debug = function () {
-  var args = Array.prototype.slice.call( arguments);
-  args.unshift(this.debug_indent);
-  print.apply( print, args );
-}
-
-Markdown.prototype.loop_re_over_block = function( re, block, cb ) {
-  // Dont use /g regexps with this
-  var m,
-      b = block.valueOf();
-
-  while ( b.length && (m = re(b) ) != null) {
-    b = b.substr( m[0].length );
-    cb.call(this, m);
-  }
-  return b;
-}
-
-/**
- * Markdown.dialects
- *
- * Namespace of built-in dialects.
- **/
-Markdown.dialects = {};
-
-/**
- * Markdown.dialects.Gruber
- *
- * The default dialect that follows the rules set out by John Gruber's
- * markdown.pl as closely as possible. Well actually we follow the behaviour of
- * that script which in some places is not exactly what the syntax web page
- * says.
- **/
-Markdown.dialects.Gruber = {
-  block: {
-    atxHeader: function atxHeader( block, next ) {
-      var m = block.match( /^(#{1,6})\s*(.*?)\s*#*\s*(?:\n|$)/ );
-
-      if ( !m ) return undefined;
-
-      var header = [ "header", { level: m[ 1 ].length }, m[ 2 ] ];
-
-      if ( m[0].length < block.length )
-        next.unshift( mk_block( block.substr( m[0].length ), block.trailing, block.lineNumber + 2 ) );
-
-      return [ header ];
-    },
-
-    setextHeader: function setextHeader( block, next ) {
-      var m = block.match( /^(.*)\n([-=])\2\2+(?:\n|$)/ );
-
-      if ( !m ) return undefined;
-
-      var level = ( m[ 2 ] === "=" ) ? 1 : 2;
-      var header = [ "header", { level : level }, m[ 1 ] ];
-
-      if ( m[0].length < block.length )
-        next.unshift( mk_block( block.substr( m[0].length ), block.trailing, block.lineNumber + 2 ) );
-
-      return [ header ];
-    },
-
-    code: function code( block, next ) {
-      // |    Foo
-      // |bar
-      // should be a code block followed by a paragraph. Fun
-      //
-      // There might also be adjacent code block to merge.
-
-      var ret = [],
-          re = /^(?: {0,3}\t| {4})(.*)\n?/,
-          lines;
-
-      // 4 spaces + content
-      var m = block.match( re );
-
-      if ( !m ) return undefined;
-
-      block_search:
-      do {
-        // Now pull out the rest of the lines
-        var b = this.loop_re_over_block(
-                  re, block.valueOf(), function( m ) { ret.push( m[1] ) } );
-
-        if (b.length) {
-          // Case alluded to in first comment. push it back on as a new block
-          next.unshift( mk_block(b, block.trailing) );
-          break block_search;
-        }
-        else if (next.length) {
-          // Check the next block - it might be code too
-          var m = next[0].match( re );
-
-          if ( !m ) break block_search;
-
-          // Pull how how many blanks lines follow - minus two to account for .join
-          ret.push ( block.trailing.replace(/[^\n]/g, '').substring(2) );
-
-          block = next.shift();
-        }
-        else
-          break block_search;
-      } while (true);
-
-      return [ [ "code_block", ret.join("\n") ] ];
-    },
-
-    horizRule: function horizRule( block, next ) {
-      // this needs to find any hr in the block to handle abutting blocks
-      var m = block.match( /^(?:([\s\S]*?)\n)?[ \t]*([-_*])(?:[ \t]*\2){2,}[ \t]*(?:\n([\s\S]*))?$/ );
-
-      if ( !m ) {
-        return undefined;
-      }
-
-      var jsonml = [ [ "hr" ] ];
-
-      // if there's a leading abutting block, process it
-      if ( m[ 1 ] ) {
-        jsonml.unshift.apply( jsonml, this.processBlock( m[ 1 ], [] ) );
-      }
-
-      // if there's a trailing abutting block, stick it into next
-      if ( m[ 3 ] ) {
-        next.unshift( mk_block( m[ 3 ] ) );
-      }
-
-      return jsonml;
-    },
-
-    // There are two types of lists. Tight and loose. Tight lists have no whitespace
-    // between the items (and result in text just in the <li>) and loose lists,
-    // which have an empty line between list items, resulting in (one or more)
-    // paragraphs inside the <li>.
-    //
-    // There are all sorts weird edge cases about the original markdown.pl's
-    // handling of lists:
-    //
-    // * Nested lists are supposed to be indented by four chars per level. But
-    //   if they aren't, you can get a nested list by indenting by less than
-    //   four so long as the indent doesn't match an indent of an existing list
-    //   item in the 'nest stack'.
-    //
-    // * The type of the list (bullet or number) is controlled just by the
-    //    first item at the indent. Subsequent changes are ignored unless they
-    //    are for nested lists
-    //
-    lists: (function( ) {
-      // Use a closure to hide a few variables.
-      var any_list = "[*+-]|\\d\\.",
-          bullet_list = /[*+-]/,
-          number_list = /\d+\./,
-          // Capture leading indent as it matters for determining nested lists.
-          is_list_re = new RegExp( "^( {0,3})(" + any_list + ")[ \t]+" ),
-          indent_re = "(?: {0,3}\\t| {4})";
-
-      // TODO: Cache this regexp for certain depths.
-      // Create a regexp suitable for matching an li for a given stack depth
-      function regex_for_depth( depth ) {
-
-        return new RegExp(
-          // m[1] = indent, m[2] = list_type
-          "(?:^(" + indent_re + "{0," + depth + "} {0,3})(" + any_list + ")\\s+)|" +
-          // m[3] = cont
-          "(^" + indent_re + "{0," + (depth-1) + "}[ ]{0,4})"
-        );
-      }
-      function expand_tab( input ) {
-        return input.replace( / {0,3}\t/g, "    " );
-      }
-
-      // Add inline content `inline` to `li`. inline comes from processInline
-      // so is an array of content
-      function add(li, loose, inline, nl) {
-        if (loose) {
-            li.push( [ "para" ].concat(inline) );
-          return;
-        }
-        // Hmmm, should this be any block level element or just paras?
-        var add_to = li[li.length -1] instanceof Array && li[li.length - 1][0] == "para"
-                   ? li[li.length -1]
-                   : li;
-
-        // If there is already some content in this list, add the new line in
-        if (nl && li.length > 1) inline.unshift(nl);
-
-        for (var i=0; i < inline.length; i++) {
-          var what = inline[i],
-              is_str = typeof what == "string";
-          if (is_str && add_to.length > 1 && typeof add_to[add_to.length-1] == "string" )
-          {
-            add_to[ add_to.length-1 ] += what;
-          }
-          else {
-            add_to.push( what );
-          }
-        }
-      }
-
-      // contained means have an indent greater than the current one. On
-      // *every* line in the block
-      function get_contained_blocks( depth, blocks ) {
-
-        var re = new RegExp( "^(" + indent_re + "{" + depth + "}.*?\\n?)*$" ),
-            replace = new RegExp("^" + indent_re + "{" + depth + "}", "gm"),
-            ret = [];
-
-        while ( blocks.length > 0 ) {
-          if ( re( blocks[0] ) ) {
-            var b = blocks.shift(),
-                // Now remove that indent
-                x = b.replace( replace, "");
-
-            ret.push( mk_block( x, b.trailing, b.lineNumber ) );
-          }
-          break;
-        }
-        return ret;
-      }
-
-      // passed to stack.forEach to turn list items up the stack into paras
-      function paragraphify(s, i, stack) {
-        var list = s.list;
-        var last_li = list[list.length-1];
-
-        if (last_li[1] instanceof Array && last_li[1][0] == "para") {
-          return;
-        }
-        if (i+1 == stack.length) {
-          // Last stack frame
-          // Keep the same array, but replace the contents
-          last_li.push( ["para"].concat( last_li.splice(1) ) );
-        }
-        else {
-          var sublist = last_li.pop();
-          last_li.push( ["para"].concat( last_li.splice(1) ), sublist );
-        }
-      }
-
-      // The matcher function
-      return function( block, next ) {
-        var m = block.match( is_list_re );
-        if ( !m ) return undefined;
-
-        function make_list( m ) {
-          var list = bullet_list( m[2] )
-                   ? ["bulletlist"]
-                   : ["numberlist"];
-
-          stack.push( { list: list, indent: m[1] } );
-          return list;
-        }
-
-
-        var stack = [], // Stack of lists for nesting.
-            list = make_list( m ),
-            last_li,
-            loose = false,
-            ret = [ stack[0].list ];
-
-        // Loop to search over block looking for inner block elements and loose lists
-        loose_search:
-        while( true ) {
-          // Split into lines preserving new lines at end of line
-          var lines = block.split( /(?=\n)/ );
-
-          // We have to grab all lines for a li and call processInline on them
-          // once as there are some inline things that can span lines.
-          var li_accumulate = "";
-
-          // Loop over the lines in this block looking for tight lists.
-          tight_search:
-          for (var line_no=0; line_no < lines.length; line_no++) {
-            var nl = "",
-                l = lines[line_no].replace(/^\n/, function(n) { nl = n; return "" });
-
-            // TODO: really should cache this
-            var line_re = regex_for_depth( stack.length );
-
-            m = l.match( line_re );
-            //print( "line:", uneval(l), "\nline match:", uneval(m) );
-
-            // We have a list item
-            if ( m[1] !== undefined ) {
-              // Process the previous list item, if any
-              if ( li_accumulate.length ) {
-                add( last_li, loose, this.processInline( li_accumulate ), nl );
-                // Loose mode will have been dealt with. Reset it
-                loose = false;
-                li_accumulate = "";
-              }
-
-              m[1] = expand_tab( m[1] );
-              var wanted_depth = Math.floor(m[1].length/4)+1;
-              //print( "want:", wanted_depth, "stack:", stack.length);
-              if ( wanted_depth > stack.length ) {
-                // Deep enough for a nested list outright
-                //print ( "new nested list" );
-                list = make_list( m );
-                last_li.push( list );
-                last_li = list[1] = [ "listitem" ];
-              }
-              else {
-                // We aren't deep enough to be strictly a new level. This is
-                // where Md.pl goes nuts. If the indent matches a level in the
-                // stack, put it there, else put it one deeper then the
-                // wanted_depth deserves.
-                var found = stack.some(function(s, i) {
-                  if ( s.indent != m[1] ) return false;
-                  list = s.list;     // Found the level we want
-                  stack.splice(i+1); // Remove the others
-                  //print("found");
-                  return true;       // And stop looping
-                });
-
-                if (!found) {
-                  //print("not found. l:", uneval(l));
-                  wanted_depth++;
-                  if (wanted_depth <= stack.length) {
-                    stack.splice(wanted_depth);
-                    //print("Desired depth now", wanted_depth, "stack:", stack.length);
-                    list = stack[wanted_depth-1].list;
-                    //print("list:", uneval(list) );
-                  }
-                  else {
-                    //print ("made new stack for messy indent");
-                    list = make_list(m);
-                    last_li.push(list);
-                  }
-                }
-
-                //print( uneval(list), "last", list === stack[stack.length-1].list );
-                last_li = [ "listitem" ];
-                list.push(last_li);
-              } // end depth of shenegains
-              nl = "";
-            }
-
-            // Add content
-            if (l.length > m[0].length) {
-              li_accumulate += nl + l.substr( m[0].length );
-            }
-          } // tight_search
-
-          if ( li_accumulate.length ) {
-            add( last_li, loose, this.processInline( li_accumulate ), nl );
-            // Loose mode will have been dealt with. Reset it
-            loose = false;
-            li_accumulate = "";
-          }
-
-          // Look at the next block - we might have a loose list. Or an extra
-          // paragraph for the current li
-          var contained = get_contained_blocks( stack.length, next );
-
-          // Deal with code blocks or properly nested lists
-          if (contained.length > 0) {
-            // Make sure all listitems up the stack are paragraphs
-            stack.forEach( paragraphify, this );
-
-            last_li.push.apply( last_li, this.toTree( contained, [] ) );
-          }
-
-          var next_block = next[0] && next[0].valueOf() || "";
-
-          if ( next_block.match(is_list_re) || next_block.match( /^ / ) ) {
-            block = next.shift();
-
-            // Check for an HR following a list: features/lists/hr_abutting
-            var hr = this.dialect.block.horizRule( block, next );
-
-            if (hr) {
-              ret.push.apply(ret, hr);
-              break;
-            }
-
-            // Make sure all listitems up the stack are paragraphs
-            stack.forEach( paragraphify , this );
-
-            loose = true;
-            continue loose_search;
-          }
-          break;
-        } // loose_search
-
-        return ret;
-      }
-    })(),
-
-    blockquote: function blockquote( block, next ) {
-      if ( !block.match( /^>/m ) )
-        return undefined;
-
-      var jsonml = [];
-
-      // separate out the leading abutting block, if any
-      if ( block[ 0 ] != ">" ) {
-        var lines = block.split( /\n/ ),
-            prev = [];
-
-        // keep shifting lines until you find a crotchet
-        while ( lines.length && lines[ 0 ][ 0 ] != ">" ) {
-            prev.push( lines.shift() );
-        }
-
-        // reassemble!
-        block = lines.join( "\n" );
-        jsonml.push.apply( jsonml, this.processBlock( prev.join( "\n" ), [] ) );
-      }
-
-      // if the next block is also a blockquote merge it in
-      while ( next.length && next[ 0 ][ 0 ] == ">" ) {
-        var b = next.shift();
-        block += block.trailing + b;
-        block.trailing = b.trailing;
-      }
-
-      // Strip off the leading "> " and re-process as a block.
-      var input = block.replace( /^> ?/gm, '' ),
-          old_tree = this.tree;
-      jsonml.push( this.toTree( input, [ "blockquote" ] ) );
-
-      return jsonml;
-    },
-
-    referenceDefn: function referenceDefn( block, next) {
-      var re = /^\s*\[(.*?)\]:\s*(\S+)(?:\s+(?:(['"])(.*?)\3|\((.*?)\)))?\n?/;
-      // interesting matches are [ , ref_id, url, , title, title ]
-
-      if ( !block.match(re) )
-        return undefined;
-
-      // make an attribute node if it doesn't exist
-      if ( !extract_attr( this.tree ) ) {
-        this.tree.splice( 1, 0, {} );
-      }
-
-      var attrs = extract_attr( this.tree );
-
-      // make a references hash if it doesn't exist
-      if ( attrs.references === undefined ) {
-        attrs.references = {};
-      }
-
-      var b = this.loop_re_over_block(re, block, function( m ) {
-
-        if ( m[2] && m[2][0] == '<' && m[2][m[2].length-1] == '>' )
-          m[2] = m[2].substring( 1, m[2].length - 1 );
-
-        var ref = attrs.references[ m[1].toLowerCase() ] = {
-          href: m[2]
-        };
-
-        if (m[4] !== undefined)
-          ref.title = m[4];
-        else if (m[5] !== undefined)
-          ref.title = m[5];
-
-      } );
-
-      if (b.length)
-        next.unshift( mk_block( b, block.trailing ) );
-
-      return [];
-    },
-
-    para: function para( block, next ) {
-      // everything's a para!
-      return [ ["para"].concat( this.processInline( block ) ) ];
-    }
-  }
-}
-
-Markdown.dialects.Gruber.inline = {
-    __call__: function inline( text, patterns ) {
-      // Hmmm - should this function be directly in Md#processInline, or
-      // conversely, should Md#processBlock be moved into block.__call__ too
-      var out = [ ],
-          m,
-          // Look for the next occurange of a special character/pattern
-          re = new RegExp( "([\\s\\S]*?)(" + (patterns.source || patterns) + ")", "g" ),
-          lastIndex = 0;
-
-      //D:var self = this;
-      //D:self.debug("processInline:", uneval(text) );
-      function add(x) {
-        //D:self.debug("  adding output", uneval(x));
-        if (typeof x == "string" && typeof out[out.length-1] == "string")
-          out[ out.length-1 ] += x;
-        else
-          out.push(x);
-      }
-
-      while ( ( m = re.exec(text) ) != null) {
-        if ( m[1] ) add( m[1] ); // Some un-interesting text matched
-        else        m[1] = { length: 0 }; // Or there was none, but make m[1].length == 0
-
-        var res;
-        if ( m[2] in this.dialect.inline ) {
-          res = this.dialect.inline[ m[2] ].call(
-                    this,
-                    text.substr( m.index + m[1].length ), m, out );
-        }
-        // Default for now to make dev easier. just slurp special and output it.
-        res = res || [ m[2].length, m[2] ];
-
-        var len = res.shift();
-        // Update how much input was consumed
-        re.lastIndex += ( len - m[2].length );
-
-        // Add children
-        res.forEach(add);
-
-        lastIndex = re.lastIndex;
-      }
-
-      // Add last 'boring' chunk
-      if ( text.length > lastIndex )
-        add( text.substr( lastIndex ) );
-
-      return out;
-    },
-
-    "\\": function escaped( text ) {
-      // [ length of input processed, node/children to add... ]
-      // Only esacape: \ ` * _ { } [ ] ( ) # * + - . !
-      if ( text.match( /^\\[\\`\*_{}\[\]()#\+.!\-]/ ) )
-        return [ 2, text[1] ];
-      else
-        // Not an esacpe
-        return [ 1, "\\" ];
-    },
-
-    "![": function image( text ) {
-      // ![Alt text](/path/to/img.jpg "Optional title")
-      //      1          2            3       4         <--- captures
-      var m = text.match( /^!\[(.*?)\][ \t]*\([ \t]*(\S*)(?:[ \t]+(["'])(.*?)\3)?[ \t]*\)/ );
-
-      if ( m ) {
-        if ( m[2] && m[2][0] == '<' && m[2][m[2].length-1] == '>' )
-          m[2] = m[2].substring( 1, m[2].length - 1 );
-
-        m[2] == this.dialect.inline.__call__.call( this, m[2], /\\/ )[0];
-
-        var attrs = { alt: m[1], href: m[2] || "" };
-        if ( m[4] !== undefined)
-          attrs.title = m[4];
-
-        return [ m[0].length, [ "img", attrs ] ];
-      }
-
-      // ![Alt text][id]
-      m = text.match( /^!\[(.*?)\][ \t]*\[(.*?)\]/ );
-
-      if ( m ) {
-        // We can't check if the reference is known here as it likely wont be
-        // found till after. Check it in md tree->hmtl tree conversion
-        return [ m[0].length, [ "img_ref", { alt: m[1], ref: m[2].toLowerCase(), text: m[0] } ] ];
-      }
-
-      // Just consume the '!['
-      return [ 2, "![" ];
-    },
-
-    "[": function link( text ) {
-      // [link text](/path/to/img.jpg "Optional title")
-      //      1          2            3       4         <--- captures
-      var m = text.match( /^\[([\s\S]*?)\][ \t]*\([ \t]*(\S+)(?:[ \t]+(["'])(.*?)\3)?[ \t]*\)/ );
-
-      if ( m ) {
-        if ( m[2] && m[2][0] == '<' && m[2][m[2].length-1] == '>' )
-          m[2] = m[2].substring( 1, m[2].length - 1 );
-
-        // Process escapes only
-        m[2] = this.dialect.inline.__call__.call( this, m[2], /\\/ )[0];
-
-        var attrs = { href: m[2] || "" };
-        if ( m[4] !== undefined)
-          attrs.title = m[4];
-
-        return [ m[0].length, [ "link", attrs, m[1] ] ];
-      }
-
-      // [Alt text][id]
-      // [Alt text] [id]
-      // [id]
-      m = text.match( /^\[([\s\S]*?)\](?: ?\[(.*?)\])?/ );
-
-      if ( m ) {
-        // [id] case, text == id
-        if ( m[2] === undefined || m[2] === "" ) m[2] = m[1];
-
-        // We can't check if the reference is known here as it likely wont be
-        // found till after. Check it in md tree->hmtl tree conversion.
-        // Store the original so that conversion can revert if the ref isn't found.
-        return [
-          m[ 0 ].length,
-          [
-            "link_ref",
-            {
-              ref: m[ 2 ].toLowerCase(),
-              original: m[ 0 ]
-            },
-            m[ 1 ]
-          ]
-        ];
-      }
-
-      // Just consume the '['
-      return [ 1, "[" ];
-    },
-
-
-    "<": function autoLink( text ) {
-      var m;
-
-      if ( ( m = text.match( /^<(?:((https?|ftp|mailto):[^>]+)|(.*?@.*?\.[a-zA-Z]+))>/ ) ) != null ) {
-        if ( m[3] ) {
-          return [ m[0].length, [ "link", { href: "mailto:" + m[3] }, m[3] ] ];
-
-        }
-        else if ( m[2] == "mailto" ) {
-          return [ m[0].length, [ "link", { href: m[1] }, m[1].substr("mailto:".length ) ] ];
-        }
-        else
-          return [ m[0].length, [ "link", { href: m[1] }, m[1] ] ];
-      }
-
-      return [ 1, "<" ];
-    },
-
-    "`": function inlineCode( text ) {
-      // Inline code block. as many backticks as you like to start it
-      // Always skip over the opening ticks.
-      var m = text.match( /(`+)(([\s\S]*?)\1)/ );
-
-      if ( m && m[2] )
-        return [ m[1].length + m[2].length, [ "inlinecode", m[3] ] ];
-      else {
-        // TODO: No matching end code found - warn!
-        return [ 1, "`" ];
-      }
-    },
-
-    "  \n": function lineBreak( text ) {
-      return [ 3, [ "linebreak" ] ];
-    }
-
-}
-
-// Meta Helper/generator method for em and strong handling
-function strong_em( tag, md ) {
-
-  var state_slot = tag + "_state",
-      other_slot = tag == "strong" ? "em_state" : "strong_state";
-
-  function CloseTag(len) {
-    this.len_after = len;
-    this.name = "close_" + md;
-  }
-
-  return function ( text, orig_match ) {
-
-    if (this[state_slot][0] == md) {
-      // Most recent em is of this type
-      //D:this.debug("closing", md);
-      this[state_slot].shift();
-
-      // "Consume" everything to go back to the recrusion in the else-block below
-      return[ text.length, new CloseTag(text.length-md.length) ];
-    }
-    else {
-      // Store a clone of the em/strong states
-      var other = this[other_slot].slice(),
-          state = this[state_slot].slice();
-
-      this[state_slot].unshift(md);
-
-      //D:this.debug_indent += "  ";
-
-      // Recurse
-      var res = this.processInline( text.substr( md.length ) );
-      //D:this.debug_indent = this.debug_indent.substr(2);
-
-      var last = res[res.length - 1];
-
-      //D:this.debug("processInline from", tag + ": ", uneval( res ) );
-
-      var check = this[state_slot].shift();
-      if (last instanceof CloseTag) {
-        res.pop();
-        // We matched! Huzzah.
-        var consumed = text.length - last.len_after;
-        return [ consumed, [ tag ].concat(res) ];
-      }
-      else {
-        // Restore the state of the other kind. We might have mistakenly closed it.
-        this[other_slot] = other;
-        this[state_slot] = state;
-
-        // We can't reuse the processed result as it could have wrong parsing contexts in it.
-        return [ md.length, md ];
-      }
-    }
-  } // End returned function
-}
-
-Markdown.dialects.Gruber.inline["**"] = strong_em("strong", "**");
-Markdown.dialects.Gruber.inline["__"] = strong_em("strong", "__");
-Markdown.dialects.Gruber.inline["*"]  = strong_em("em", "*");
-Markdown.dialects.Gruber.inline["_"]  = strong_em("em", "_");
-
-
-// Build default order from insertion order.
-Markdown.buildBlockOrder = function(d) {
-  var ord = [];
-  for ( var i in d ) {
-    if ( i == "__order__" || i == "__call__" ) continue;
-    ord.push( i );
-  }
-  d.__order__ = ord;
-}
-
-// Build patterns for inline matcher
-Markdown.buildInlinePatterns = function(d) {
-  var patterns = [];
-
-  for ( var i in d ) {
-    if (i == "__call__") continue;
-    var l = i.replace( /([\\.*+?|()\[\]{}])/g, "\\$1" )
-             .replace( /\n/, "\\n" );
-    patterns.push( i.length == 1 ? l : "(?:" + l + ")" );
-  }
-
-  patterns = patterns.join("|");
-  //print("patterns:", uneval( patterns ) );
-
-  var fn = d.__call__;
-  d.__call__ = function(text, pattern) {
-    if (pattern != undefined)
-      return fn.call(this, text, pattern);
-    else
-      return fn.call(this, text, patterns);
-  }
-}
-
-// Helper function to make sub-classing a dialect easier
-Markdown.subclassDialect = function( d ) {
-  function Block() {};
-  Block.prototype = d.block;
-  function Inline() {};
-  Inline.prototype = d.inline;
-
-  return { block: new Block(), inline: new Inline() };
-}
-
-Markdown.buildBlockOrder ( Markdown.dialects.Gruber.block );
-Markdown.buildInlinePatterns( Markdown.dialects.Gruber.inline );
-
-Markdown.dialects.Maruku = Markdown.subclassDialect( Markdown.dialects.Gruber );
-
-Markdown.dialects.Maruku.block.document_meta = function document_meta( block, next ) {
-  // we're only interested in the first block
-  if ( block.lineNumber > 1 ) return undefined;
-
-  // document_meta blocks consist of one or more lines of `Key: Value\n`
-  if ( ! block.match( /^(?:\w+:.*\n)*\w+:.*$/ ) ) return undefined;
-
-  // make an attribute node if it doesn't exist
-  if ( !extract_attr( this.tree ) ) {
-    this.tree.splice( 1, 0, {} );
-  }
-
-  var pairs = block.split( /\n/ );
-  for ( p in pairs ) {
-    var m = pairs[ p ].match( /(\w+):\s*(.*)$/ ),
-        key = m[ 1 ].toLowerCase(),
-        value = m[ 2 ];
-
-    this.tree[ 1 ][ key ] = value;
-  }
-
-  // document_meta produces no content!
-  return [];
-}
-
-Markdown.dialects.Maruku.block.block_meta = function block_meta( block, next ) {
-  // check if the last line of the block is an meta hash
-  var m = block.match( /(^|\n) {0,3}\{:\s*((?:\\\}|[^\}])*)\s*\}$/ );
-  if ( !m ) return undefined;
-
-  // process the meta hash
-  var attr = process_meta_hash( m[ 2 ] );
-
-  // if we matched ^ then we need to apply meta to the previous block
-  if ( m[ 1 ] === "" ) {
-    var node = this.tree[ this.tree.length - 1 ],
-        hash = extract_attr( node );
-
-    // if the node is a string (rather than JsonML), bail
-    if ( typeof node === "string" ) return undefined;
-
-    // create the attribute hash if it doesn't exist
-    if ( !hash ) {
-      hash = {};
-      node.splice( 1, 0, hash );
-    }
-
-    // add the attributes in
-    for ( a in attr ) {
-      hash[ a ] = attr[ a ];
-    }
-
-    // return nothing so the meta hash is removed
-    return [];
-  }
-
-  // pull the meta hash off the block and process what's left
-  var b = block.replace( /\n.*$/, "" ),
-      result = this.processBlock( b, [] );
-
-  // get or make the attributes hash
-  var hash = extract_attr( result[ 0 ] );
-  if ( !hash ) {
-    hash = {};
-    result[ 0 ].splice( 1, 0, hash );
-  }
-
-  // attach the attributes to the block
-  for ( a in attr ) {
-    hash[ a ] = attr[ a ];
-  }
-
-  return result;
-}
-
-Markdown.dialects.Maruku.block.definition_list = function definition_list( block, next ) {
-  // one or more terms followed by one or more definitions, in a single block
-  var tight = /^((?:[^\s:].*\n)+):\s+([^]+)$/,
-      list = [ "dl" ];
-
-  // see if we're dealing with a tight or loose block
-  if ( ( m = block.match( tight ) ) ) {
-    // pull subsequent tight DL blocks out of `next`
-    var blocks = [ block ];
-    while ( next.length && tight.exec( next[ 0 ] ) ) {
-      blocks.push( next.shift() );
-    }
-
-    for ( var b = 0; b < blocks.length; ++b ) {
-      var m = blocks[ b ].match( tight ),
-          terms = m[ 1 ].replace( /\n$/, "" ).split( /\n/ ),
-          defns = m[ 2 ].split( /\n:\s+/ );
-
-      // print( uneval( m ) );
-
-      for ( var i = 0; i < terms.length; ++i ) {
-        list.push( [ "dt", terms[ i ] ] );
-      }
-
-      for ( var i = 0; i < defns.length; ++i ) {
-        // run inline processing over the definition
-        list.push( [ "dd" ].concat( this.processInline( defns[ i ].replace( /(\n)\s+/, "$1" ) ) ) );
-      }
-    }
-  }
-  else {
-    return undefined;
-  }
-
-  return [ list ];
-}
-
-Markdown.dialects.Maruku.inline[ "{:" ] = function inline_meta( text, matches, out ) {
-  if ( !out.length ) {
-    return [ 2, "{:" ];
-  }
-
-  // get the preceeding element
-  var before = out[ out.length - 1 ];
-
-  if ( typeof before === "string" ) {
-    return [ 2, "{:" ];
-  }
-
-  // match a meta hash
-  var m = text.match( /^\{:\s*((?:\\\}|[^\}])*)\s*\}/ );
-
-  // no match, false alarm
-  if ( !m ) {
-    return [ 2, "{:" ];
-  }
-
-  // attach the attributes to the preceeding element
-  var meta = process_meta_hash( m[ 1 ] ),
-      attr = extract_attr( before );
-
-  if ( !attr ) {
-    attr = {};
-    before.splice( 1, 0, attr );
-  }
-
-  for ( var k in meta ) {
-    attr[ k ] = meta[ k ];
-  }
-
-  // cut out the string and replace it with nothing
-  return [ m[ 0 ].length, "" ];
-}
-
-Markdown.buildBlockOrder ( Markdown.dialects.Maruku.block );
-Markdown.buildInlinePatterns( Markdown.dialects.Maruku.inline );
-
-function extract_attr( jsonml ) {
-  return jsonml instanceof Array
-      && jsonml.length > 1
-      && typeof jsonml[ 1 ] === "object"
-      && !( jsonml[ 1 ] instanceof Array )
-      ? jsonml[ 1 ]
-      : undefined;
-}
-
-function process_meta_hash( meta_string ) {
-  var meta = split_meta_hash( meta_string ),
-      attr = {};
-
-  for ( var i = 0; i < meta.length; ++i ) {
-    // id: #foo
-    if ( /^#/.test( meta[ i ] ) ) {
-      attr.id = meta[ i ].substring( 1 );
-    }
-    // class: .foo
-    else if ( /^\./.test( meta[ i ] ) ) {
-      // if class already exists, append the new one
-      if ( attr['class'] ) {
-        attr['class'] = attr['class'] + meta[ i ].replace( /./, " " );
-      }
-      else {
-        attr['class'] = meta[ i ].substring( 1 );
-      }
-    }
-    // attribute: foo=bar
-    else if ( /=/.test( meta[ i ] ) ) {
-      var s = meta[ i ].split( /=/ );
-      attr[ s[ 0 ] ] = s[ 1 ];
-    }
-  }
-
-  return attr;
-}
-
-function split_meta_hash( meta_string ) {
-  var meta = meta_string.split( "" ),
-      parts = [ "" ],
-      in_quotes = false;
-
-  while ( meta.length ) {
-    var letter = meta.shift();
-    switch ( letter ) {
-      case " " :
-        // if we're in a quoted section, keep it
-        if ( in_quotes ) {
-          parts[ parts.length - 1 ] += letter;
-        }
-        // otherwise make a new part
-        else {
-          parts.push( "" );
-        }
-        break;
-      case "'" :
-      case '"' :
-        // reverse the quotes and move straight on
-        in_quotes = !in_quotes;
-        break;
-      case "\\" :
-        // shift off the next letter to be used straight away.
-        // it was escaped so we'll keep it whatever it is
-        letter = meta.shift();
-      default :
-        parts[ parts.length - 1 ] += letter;
-        break;
-    }
-  }
-
-  return parts;
-}
-
-/**
- *  renderJsonML( jsonml[, options] ) -> String
- *  - jsonml (Array): JsonML array to render to XML
- *  - options (Object): options
- *
- *  Converts the given JsonML into well-formed XML.
- *
- *  The options currently understood are:
- *
- *  - root (Boolean): wether or not the root node should be included in the
- *    output, or just its children. The default `false` is to not include the
- *    root itself.
- */
-expose.renderJsonML = function( jsonml, options ) {
-  options = options || {};
-  // include the root element in the rendered output?
-  options.root = options.root || false;
-
-  var content = [];
-
-  if ( options.root ) {
-    content.push( render_tree( jsonml ) );
-  }
-  else {
-    jsonml.shift(); // get rid of the tag
-    if ( jsonml.length && typeof jsonml[ 0 ] === "object" && !( jsonml[ 0 ] instanceof Array ) ) {
-      jsonml.shift(); // get rid of the attributes
-    }
-
-    while ( jsonml.length ) {
-      content.push( render_tree( jsonml.shift() ) );
-    }
-  }
-
-  return content.join( "\n\n" );
-}
-
-function escapeHTML( text ) {
-  return text.replace( /&/g, "&amp;" )
-             .replace( /</g, "&lt;" )
-             .replace( />/g, "&gt;" )
-             .replace( /"/g, "&quot;" )
-             .replace( /'/g, "&#39;" );
-}
-
-function render_tree( jsonml ) {
-  // basic case
-  if ( typeof jsonml === "string" ) {
-    return escapeHTML( jsonml );
-  }
-
-  var tag = jsonml.shift(),
-      attributes = {},
-      content = [];
-
-  if ( jsonml.length && typeof jsonml[ 0 ] === "object" && !( jsonml[ 0 ] instanceof Array ) ) {
-    attributes = jsonml.shift();
-  }
-
-  while ( jsonml.length ) {
-    content.push( arguments.callee( jsonml.shift() ) );
-  }
-
-  var tag_attrs = "";
-  for ( var a in attributes ) {
-    tag_attrs += " " + a + '="' + escapeHTML( attributes[ a ] ) + '"';
-  }
-
-  // be careful about adding whitespace here for inline elements
-  return "<"+ tag + tag_attrs + ">" + content.join( "" ) + "</" + tag + ">";
-}
-
-function convert_tree_to_html( tree, references ) {
-  // shallow clone
-  var jsonml = tree.slice( 0 );
-
-  // Clone attributes if the exist
-  var attrs = extract_attr( jsonml );
-  if ( attrs ) {
-    jsonml[ 1 ] = {};
-    for ( var i in attrs ) {
-      jsonml[ 1 ][ i ] = attrs[ i ];
-    }
-    attrs = jsonml[ 1 ];
-  }
-
-  // basic case
-  if ( typeof jsonml === "string" ) {
-    return jsonml;
-  }
-
-  // convert this node
-  switch ( jsonml[ 0 ] ) {
-    case "header":
-      jsonml[ 0 ] = "h" + jsonml[ 1 ].level;
-      delete jsonml[ 1 ].level;
-      break;
-    case "bulletlist":
-      jsonml[ 0 ] = "ul";
-      break;
-    case "numberlist":
-      jsonml[ 0 ] = "ol";
-      break;
-    case "listitem":
-      jsonml[ 0 ] = "li";
-      break;
-    case "para":
-      jsonml[ 0 ] = "p";
-      break;
-    case "markdown":
-      jsonml[ 0 ] = "html";
-      if ( attrs ) delete attrs.references;
-      break;
-    case "code_block":
-      jsonml[ 0 ] = "pre";
-      var i = attrs ? 2 : 1;
-      var code = [ "code" ];
-      code.push.apply( code, jsonml.splice( i ) );
-      jsonml[ i ] = code;
-      break;
-    case "inlinecode":
-      jsonml[ 0 ] = "code";
-      break;
-    case "img":
-      jsonml[ 1 ].src = jsonml[ 1 ].href;
-      delete jsonml[ 1 ].href;
-      break;
-    case "linebreak":
-      jsonml[0] = "br";
-    break;
-    case "link":
-      jsonml[ 0 ] = "a";
-      break;
-    case "link_ref":
-      jsonml[ 0 ] = "a";
-
-      // grab this ref and clean up the attribute node
-      var ref = references[ attrs.ref ];
-
-      // if the reference exists, make the link
-      if ( ref ) {
-        delete attrs.ref;
-
-        // add in the href and title, if present
-        attrs.href = ref.href;
-        if ( ref.title ) {
-          attrs.title = ref.title;
-        }
-
-        // get rid of the unneeded original text
-        delete attrs.original;
-      }
-      // the reference doesn't exist, so revert to plain text
-      else {
-        return attrs.original;
-      }
-      break;
-  }
-
-  // convert all the children
-  var i = 1;
-
-  // deal with the attribute node, if it exists
-  if ( attrs ) {
-    // if there are keys, skip over it
-    for ( var key in jsonml[ 1 ] ) {
-      i = 2;
-    }
-    // if there aren't, remove it
-    if ( i === 1 ) {
-      jsonml.splice( i, 1 );
-    }
-  }
-
-  for ( ; i < jsonml.length; ++i ) {
-    jsonml[ i ] = arguments.callee( jsonml[ i ], references );
-  }
-
-  return jsonml;
+	return text;
 }
 
 
-// merges adjacent text nodes into a single node
-function merge_text_nodes( jsonml ) {
-  // skip the tag name and attribute hash
-  var i = extract_attr( jsonml ) ? 2 : 1;
+var _StripLinkDefinitions = function(text) {
+//
+// Strips link definitions from text, stores the URLs and titles in
+// hash references.
+//
 
-  while ( i < jsonml.length ) {
-    // if it's a string check the next item too
-    if ( typeof jsonml[ i ] === "string" ) {
-      if ( i + 1 < jsonml.length && typeof jsonml[ i + 1 ] === "string" ) {
-        // merge the second string into the first and remove it
-        jsonml[ i ] += jsonml.splice( i + 1, 1 )[ 0 ];
-      }
-      else {
-        ++i;
-      }
-    }
-    // if it's not a string recurse
-    else {
-      arguments.callee( jsonml[ i ] );
-      ++i;
-    }
-  }
+	// Link defs are in the form: ^[id]: url "optional title"
+
+	/*
+		var text = text.replace(/
+				^[ ]{0,3}\[(.+)\]:  // id = $1  attacklab: g_tab_width - 1
+				  [ \t]*
+				  \n?				// maybe *one* newline
+				  [ \t]*
+				<?(\S+?)>?			// url = $2
+				  [ \t]*
+				  \n?				// maybe one newline
+				  [ \t]*
+				(?:
+				  (\n*)				// any lines skipped = $3 attacklab: lookbehind removed
+				  ["(]
+				  (.+?)				// title = $4
+				  [")]
+				  [ \t]*
+				)?					// title is optional
+				(?:\n+|$)
+			  /gm,
+			  function(){...});
+	*/
+	var text = text.replace(/^[ ]{0,3}\[(.+)\]:[ \t]*\n?[ \t]*<?(\S+?)>?[ \t]*\n?[ \t]*(?:(\n*)["(](.+?)[")][ \t]*)?(?:\n+|\Z)/gm,
+		function (wholeMatch,m1,m2,m3,m4) {
+			m1 = m1.toLowerCase();
+			g_urls[m1] = _EncodeAmpsAndAngles(m2);  // Link IDs are case-insensitive
+			if (m3) {
+				// Oops, found blank lines, so it's not a title.
+				// Put back the parenthetical statement we stole.
+				return m3+m4;
+			} else if (m4) {
+				g_titles[m1] = m4.replace(/"/g,"&quot;");
+			}
+			
+			// Completely remove the definition from the text
+			return "";
+		}
+	);
+
+	return text;
 }
 
-} )( (function() {
-  if ( typeof exports === "undefined" ) {
-    window.markdown = {};
-    return window.markdown;
-  }
-  else {
-    return exports;
-  }
-} )() );
+
+var _HashHTMLBlocks = function(text) {
+	// attacklab: Double up blank lines to reduce lookaround
+	text = text.replace(/\n/g,"\n\n");
+
+	// Hashify HTML blocks:
+	// We only want to do this for block-level HTML tags, such as headers,
+	// lists, and tables. That's because we still want to wrap <p>s around
+	// "paragraphs" that are wrapped in non-block-level tags, such as anchors,
+	// phrase emphasis, and spans. The list of tags we're looking for is
+	// hard-coded:
+	var block_tags_a = "p|div|h[1-6]|blockquote|pre|table|dl|ol|ul|script|noscript|form|fieldset|iframe|math|ins|del"
+	var block_tags_b = "p|div|h[1-6]|blockquote|pre|table|dl|ol|ul|script|noscript|form|fieldset|iframe|math"
+
+	// First, look for nested blocks, e.g.:
+	//   <div>
+	//     <div>
+	//     tags for inner block must be indented.
+	//     </div>
+	//   </div>
+	//
+	// The outermost tags must start at the left margin for this to match, and
+	// the inner nested divs must be indented.
+	// We need to do this before the next, more liberal match, because the next
+	// match will start at the first `<div>` and stop at the first `</div>`.
+
+	// attacklab: This regex can be expensive when it fails.
+	/*
+		var text = text.replace(/
+		(						// save in $1
+			^					// start of line  (with /m)
+			<($block_tags_a)	// start tag = $2
+			\b					// word break
+								// attacklab: hack around khtml/pcre bug...
+			[^\r]*?\n			// any number of lines, minimally matching
+			</\2>				// the matching end tag
+			[ \t]*				// trailing spaces/tabs
+			(?=\n+)				// followed by a newline
+		)						// attacklab: there are sentinel newlines at end of document
+		/gm,function(){...}};
+	*/
+	text = text.replace(/^(<(p|div|h[1-6]|blockquote|pre|table|dl|ol|ul|script|noscript|form|fieldset|iframe|math|ins|del)\b[^\r]*?\n<\/\2>[ \t]*(?=\n+))/gm,hashElement);
+
+	//
+	// Now match more liberally, simply from `\n<tag>` to `</tag>\n`
+	//
+
+	/*
+		var text = text.replace(/
+		(						// save in $1
+			^					// start of line  (with /m)
+			<($block_tags_b)	// start tag = $2
+			\b					// word break
+								// attacklab: hack around khtml/pcre bug...
+			[^\r]*?				// any number of lines, minimally matching
+			.*</\2>				// the matching end tag
+			[ \t]*				// trailing spaces/tabs
+			(?=\n+)				// followed by a newline
+		)						// attacklab: there are sentinel newlines at end of document
+		/gm,function(){...}};
+	*/
+	text = text.replace(/^(<(p|div|h[1-6]|blockquote|pre|table|dl|ol|ul|script|noscript|form|fieldset|iframe|math)\b[^\r]*?.*<\/\2>[ \t]*(?=\n+)\n)/gm,hashElement);
+
+	// Special case just for <hr />. It was easier to make a special case than
+	// to make the other regex more complicated.  
+
+	/*
+		text = text.replace(/
+		(						// save in $1
+			\n\n				// Starting after a blank line
+			[ ]{0,3}
+			(<(hr)				// start tag = $2
+			\b					// word break
+			([^<>])*?			// 
+			\/?>)				// the matching end tag
+			[ \t]*
+			(?=\n{2,})			// followed by a blank line
+		)
+		/g,hashElement);
+	*/
+	text = text.replace(/(\n[ ]{0,3}(<(hr)\b([^<>])*?\/?>)[ \t]*(?=\n{2,}))/g,hashElement);
+
+	// Special case for standalone HTML comments:
+
+	/*
+		text = text.replace(/
+		(						// save in $1
+			\n\n				// Starting after a blank line
+			[ ]{0,3}			// attacklab: g_tab_width - 1
+			<!
+			(--[^\r]*?--\s*)+
+			>
+			[ \t]*
+			(?=\n{2,})			// followed by a blank line
+		)
+		/g,hashElement);
+	*/
+	text = text.replace(/(\n\n[ ]{0,3}<!(--[^\r]*?--\s*)+>[ \t]*(?=\n{2,}))/g,hashElement);
+
+	// PHP and ASP-style processor instructions (<?...?> and <%...%>)
+
+	/*
+		text = text.replace(/
+		(?:
+			\n\n				// Starting after a blank line
+		)
+		(						// save in $1
+			[ ]{0,3}			// attacklab: g_tab_width - 1
+			(?:
+				<([?%])			// $2
+				[^\r]*?
+				\2>
+			)
+			[ \t]*
+			(?=\n{2,})			// followed by a blank line
+		)
+		/g,hashElement);
+	*/
+	text = text.replace(/(?:\n\n)([ ]{0,3}(?:<([?%])[^\r]*?\2>)[ \t]*(?=\n{2,}))/g,hashElement);
+
+	// attacklab: Undo double lines (see comment at top of this function)
+	text = text.replace(/\n\n/g,"\n");
+	return text;
+}
+
+var hashElement = function(wholeMatch,m1) {
+	var blockText = m1;
+
+	// Undo double lines
+	blockText = blockText.replace(/\n\n/g,"\n");
+	blockText = blockText.replace(/^\n/,"");
+	
+	// strip trailing blank lines
+	blockText = blockText.replace(/\n+$/g,"");
+	
+	// Replace the element text with a marker ("~KxK" where x is its key)
+	blockText = "\n\n~K" + (g_html_blocks.push(blockText)-1) + "K\n\n";
+	
+	return blockText;
+};
+
+var _RunBlockGamut = function(text) {
+//
+// These are all the transformations that form block-level
+// tags like paragraphs, headers, and list items.
+//
+	text = _DoHeaders(text);
+
+	// Do Horizontal Rules:
+	var key = hashBlock("<hr />");
+	text = text.replace(/^[ ]{0,2}([ ]?\*[ ]?){3,}[ \t]*$/gm,key);
+	text = text.replace(/^[ ]{0,2}([ ]?\-[ ]?){3,}[ \t]*$/gm,key);
+	text = text.replace(/^[ ]{0,2}([ ]?\_[ ]?){3,}[ \t]*$/gm,key);
+
+	text = _DoLists(text);
+	text = _DoCodeBlocks(text);
+	text = _DoBlockQuotes(text);
+
+	// We already ran _HashHTMLBlocks() before, in Markdown(), but that
+	// was to escape raw HTML in the original Markdown source. This time,
+	// we're escaping the markup we've just created, so that we don't wrap
+	// <p> tags around block-level tags.
+	text = _HashHTMLBlocks(text);
+	text = _FormParagraphs(text);
+
+	return text;
+}
+
+
+var _RunSpanGamut = function(text) {
+//
+// These are all the transformations that occur *within* block-level
+// tags like paragraphs, headers, and list items.
+//
+
+	text = _DoCodeSpans(text);
+	text = _EscapeSpecialCharsWithinTagAttributes(text);
+	text = _EncodeBackslashEscapes(text);
+
+	// Process anchor and image tags. Images must come first,
+	// because ![foo][f] looks like an anchor.
+	text = _DoImages(text);
+	text = _DoAnchors(text);
+
+	// Make links out of things like `<http://example.com/>`
+	// Must come after _DoAnchors(), because you can use < and >
+	// delimiters in inline links like [this](<url>).
+	text = _DoAutoLinks(text);
+	text = _EncodeAmpsAndAngles(text);
+	text = _DoItalicsAndBold(text);
+
+	// Do hard breaks:
+	text = text.replace(/  +\n/g," <br />\n");
+
+	return text;
+}
+
+var _EscapeSpecialCharsWithinTagAttributes = function(text) {
+//
+// Within tags -- meaning between < and > -- encode [\ ` * _] so they
+// don't conflict with their use in Markdown for code, italics and strong.
+//
+
+	// Build a regex to find HTML tags and comments.  See Friedl's 
+	// "Mastering Regular Expressions", 2nd Ed., pp. 200-201.
+	var regex = /(<[a-z\/!$]("[^"]*"|'[^']*'|[^'">])*>|<!(--.*?--\s*)+>)/gi;
+
+	text = text.replace(regex, function(wholeMatch) {
+		var tag = wholeMatch.replace(/(.)<\/?code>(?=.)/g,"$1`");
+		tag = escapeCharacters(tag,"\\`*_");
+		return tag;
+	});
+
+	return text;
+}
+
+var _DoAnchors = function(text) {
+//
+// Turn Markdown link shortcuts into XHTML <a> tags.
+//
+	//
+	// First, handle reference-style links: [link text] [id]
+	//
+
+	/*
+		text = text.replace(/
+		(							// wrap whole match in $1
+			\[
+			(
+				(?:
+					\[[^\]]*\]		// allow brackets nested one level
+					|
+					[^\[]			// or anything else
+				)*
+			)
+			\]
+
+			[ ]?					// one optional space
+			(?:\n[ ]*)?				// one optional newline followed by spaces
+
+			\[
+			(.*?)					// id = $3
+			\]
+		)()()()()					// pad remaining backreferences
+		/g,_DoAnchors_callback);
+	*/
+	text = text.replace(/(\[((?:\[[^\]]*\]|[^\[\]])*)\][ ]?(?:\n[ ]*)?\[(.*?)\])()()()()/g,writeAnchorTag);
+
+	//
+	// Next, inline-style links: [link text](url "optional title")
+	//
+
+	/*
+		text = text.replace(/
+			(						// wrap whole match in $1
+				\[
+				(
+					(?:
+						\[[^\]]*\]	// allow brackets nested one level
+					|
+					[^\[\]]			// or anything else
+				)
+			)
+			\]
+			\(						// literal paren
+			[ \t]*
+			()						// no id, so leave $3 empty
+			<?(.*?)>?				// href = $4
+			[ \t]*
+			(						// $5
+				(['"])				// quote char = $6
+				(.*?)				// Title = $7
+				\6					// matching quote
+				[ \t]*				// ignore any spaces/tabs between closing quote and )
+			)?						// title is optional
+			\)
+		)
+		/g,writeAnchorTag);
+	*/
+	text = text.replace(/(\[((?:\[[^\]]*\]|[^\[\]])*)\]\([ \t]*()<?(.*?)>?[ \t]*((['"])(.*?)\6[ \t]*)?\))/g,writeAnchorTag);
+
+	//
+	// Last, handle reference-style shortcuts: [link text]
+	// These must come last in case you've also got [link test][1]
+	// or [link test](/foo)
+	//
+
+	/*
+		text = text.replace(/
+		(		 					// wrap whole match in $1
+			\[
+			([^\[\]]+)				// link text = $2; can't contain '[' or ']'
+			\]
+		)()()()()()					// pad rest of backreferences
+		/g, writeAnchorTag);
+	*/
+	text = text.replace(/(\[([^\[\]]+)\])()()()()()/g, writeAnchorTag);
+
+	return text;
+}
+
+var writeAnchorTag = function(wholeMatch,m1,m2,m3,m4,m5,m6,m7) {
+	if (m7 == undefined) m7 = "";
+	var whole_match = m1;
+	var link_text   = m2;
+	var link_id	 = m3.toLowerCase();
+	var url		= m4;
+	var title	= m7;
+	
+	if (url == "") {
+		if (link_id == "") {
+			// lower-case and turn embedded newlines into spaces
+			link_id = link_text.toLowerCase().replace(/ ?\n/g," ");
+		}
+		url = "#"+link_id;
+		
+		if (g_urls[link_id] != undefined) {
+			url = g_urls[link_id];
+			if (g_titles[link_id] != undefined) {
+				title = g_titles[link_id];
+			}
+		}
+		else {
+			if (whole_match.search(/\(\s*\)$/m)>-1) {
+				// Special case for explicit empty url
+				url = "";
+			} else {
+				return whole_match;
+			}
+		}
+	}	
+	
+	url = escapeCharacters(url,"*_");
+	var result = "<a href=\"" + url + "\"";
+	
+	if (title != "") {
+		title = title.replace(/"/g,"&quot;");
+		title = escapeCharacters(title,"*_");
+		result +=  " title=\"" + title + "\"";
+	}
+	
+	result += ">" + link_text + "</a>";
+	
+	return result;
+}
+
+
+var _DoImages = function(text) {
+//
+// Turn Markdown image shortcuts into <img> tags.
+//
+
+	//
+	// First, handle reference-style labeled images: ![alt text][id]
+	//
+
+	/*
+		text = text.replace(/
+		(						// wrap whole match in $1
+			!\[
+			(.*?)				// alt text = $2
+			\]
+
+			[ ]?				// one optional space
+			(?:\n[ ]*)?			// one optional newline followed by spaces
+
+			\[
+			(.*?)				// id = $3
+			\]
+		)()()()()				// pad rest of backreferences
+		/g,writeImageTag);
+	*/
+	text = text.replace(/(!\[(.*?)\][ ]?(?:\n[ ]*)?\[(.*?)\])()()()()/g,writeImageTag);
+
+	//
+	// Next, handle inline images:  ![alt text](url "optional title")
+	// Don't forget: encode * and _
+
+	/*
+		text = text.replace(/
+		(						// wrap whole match in $1
+			!\[
+			(.*?)				// alt text = $2
+			\]
+			\s?					// One optional whitespace character
+			\(					// literal paren
+			[ \t]*
+			()					// no id, so leave $3 empty
+			<?(\S+?)>?			// src url = $4
+			[ \t]*
+			(					// $5
+				(['"])			// quote char = $6
+				(.*?)			// title = $7
+				\6				// matching quote
+				[ \t]*
+			)?					// title is optional
+		\)
+		)
+		/g,writeImageTag);
+	*/
+	text = text.replace(/(!\[(.*?)\]\s?\([ \t]*()<?(\S+?)>?[ \t]*((['"])(.*?)\6[ \t]*)?\))/g,writeImageTag);
+
+	return text;
+}
+
+var writeImageTag = function(wholeMatch,m1,m2,m3,m4,m5,m6,m7) {
+	var whole_match = m1;
+	var alt_text   = m2;
+	var link_id	 = m3.toLowerCase();
+	var url		= m4;
+	var title	= m7;
+
+	if (!title) title = "";
+	
+	if (url == "") {
+		if (link_id == "") {
+			// lower-case and turn embedded newlines into spaces
+			link_id = alt_text.toLowerCase().replace(/ ?\n/g," ");
+		}
+		url = "#"+link_id;
+		
+		if (g_urls[link_id] != undefined) {
+			url = g_urls[link_id];
+			if (g_titles[link_id] != undefined) {
+				title = g_titles[link_id];
+			}
+		}
+		else {
+			return whole_match;
+		}
+	}	
+	
+	alt_text = alt_text.replace(/"/g,"&quot;");
+	url = escapeCharacters(url,"*_");
+	var result = "<img src=\"" + url + "\" alt=\"" + alt_text + "\"";
+
+	// attacklab: Markdown.pl adds empty title attributes to images.
+	// Replicate this bug.
+
+	//if (title != "") {
+		title = title.replace(/"/g,"&quot;");
+		title = escapeCharacters(title,"*_");
+		result +=  " title=\"" + title + "\"";
+	//}
+	
+	result += " />";
+	
+	return result;
+}
+
+
+var _DoHeaders = function(text) {
+
+	// Setext-style headers:
+	//	Header 1
+	//	========
+	//  
+	//	Header 2
+	//	--------
+	//
+	text = text.replace(/^(.+)[ \t]*\n=+[ \t]*\n+/gm,
+		function(wholeMatch,m1){return hashBlock("<h1>" + _RunSpanGamut(m1) + "</h1>");});
+
+	text = text.replace(/^(.+)[ \t]*\n-+[ \t]*\n+/gm,
+		function(matchFound,m1){return hashBlock("<h2>" + _RunSpanGamut(m1) + "</h2>");});
+
+	// atx-style headers:
+	//  # Header 1
+	//  ## Header 2
+	//  ## Header 2 with closing hashes ##
+	//  ...
+	//  ###### Header 6
+	//
+
+	/*
+		text = text.replace(/
+			^(\#{1,6})				// $1 = string of #'s
+			[ \t]*
+			(.+?)					// $2 = Header text
+			[ \t]*
+			\#*						// optional closing #'s (not counted)
+			\n+
+		/gm, function() {...});
+	*/
+
+	text = text.replace(/^(\#{1,6})[ \t]*(.+?)[ \t]*\#*\n+/gm,
+		function(wholeMatch,m1,m2) {
+			var h_level = m1.length;
+			return hashBlock("<h" + h_level + ">" + _RunSpanGamut(m2) + "</h" + h_level + ">");
+		});
+
+	return text;
+}
+
+// This declaration keeps Dojo compressor from outputting garbage:
+var _ProcessListItems;
+
+var _DoLists = function(text) {
+//
+// Form HTML ordered (numbered) and unordered (bulleted) lists.
+//
+
+	// attacklab: add sentinel to hack around khtml/safari bug:
+	// http://bugs.webkit.org/show_bug.cgi?id=11231
+	text += "~0";
+
+	// Re-usable pattern to match any entirel ul or ol list:
+
+	/*
+		var whole_list = /
+		(									// $1 = whole list
+			(								// $2
+				[ ]{0,3}					// attacklab: g_tab_width - 1
+				([*+-]|\d+[.])				// $3 = first list item marker
+				[ \t]+
+			)
+			[^\r]+?
+			(								// $4
+				~0							// sentinel for workaround; should be $
+			|
+				\n{2,}
+				(?=\S)
+				(?!							// Negative lookahead for another list item marker
+					[ \t]*
+					(?:[*+-]|\d+[.])[ \t]+
+				)
+			)
+		)/g
+	*/
+	var whole_list = /^(([ ]{0,3}([*+-]|\d+[.])[ \t]+)[^\r]+?(~0|\n{2,}(?=\S)(?![ \t]*(?:[*+-]|\d+[.])[ \t]+)))/gm;
+
+	if (g_list_level) {
+		text = text.replace(whole_list,function(wholeMatch,m1,m2) {
+			var list = m1;
+			var list_type = (m2.search(/[*+-]/g)>-1) ? "ul" : "ol";
+
+			// Turn double returns into triple returns, so that we can make a
+			// paragraph for the last item in a list, if necessary:
+			list = list.replace(/\n{2,}/g,"\n\n\n");;
+			var result = _ProcessListItems(list);
+	
+			// Trim any trailing whitespace, to put the closing `</$list_type>`
+			// up on the preceding line, to get it past the current stupid
+			// HTML block parser. This is a hack to work around the terrible
+			// hack that is the HTML block parser.
+			result = result.replace(/\s+$/,"");
+			result = "<"+list_type+">" + result + "</"+list_type+">\n";
+			return result;
+		});
+	} else {
+		whole_list = /(\n\n|^\n?)(([ ]{0,3}([*+-]|\d+[.])[ \t]+)[^\r]+?(~0|\n{2,}(?=\S)(?![ \t]*(?:[*+-]|\d+[.])[ \t]+)))/g;
+		text = text.replace(whole_list,function(wholeMatch,m1,m2,m3) {
+			var runup = m1;
+			var list = m2;
+
+			var list_type = (m3.search(/[*+-]/g)>-1) ? "ul" : "ol";
+			// Turn double returns into triple returns, so that we can make a
+			// paragraph for the last item in a list, if necessary:
+			var list = list.replace(/\n{2,}/g,"\n\n\n");;
+			var result = _ProcessListItems(list);
+			result = runup + "<"+list_type+">\n" + result + "</"+list_type+">\n";	
+			return result;
+		});
+	}
+
+	// attacklab: strip sentinel
+	text = text.replace(/~0/,"");
+
+	return text;
+}
+
+_ProcessListItems = function(list_str) {
+//
+//  Process the contents of a single ordered or unordered list, splitting it
+//  into individual list items.
+//
+	// The $g_list_level global keeps track of when we're inside a list.
+	// Each time we enter a list, we increment it; when we leave a list,
+	// we decrement. If it's zero, we're not in a list anymore.
+	//
+	// We do this because when we're not inside a list, we want to treat
+	// something like this:
+	//
+	//    I recommend upgrading to version
+	//    8. Oops, now this line is treated
+	//    as a sub-list.
+	//
+	// As a single paragraph, despite the fact that the second line starts
+	// with a digit-period-space sequence.
+	//
+	// Whereas when we're inside a list (or sub-list), that line will be
+	// treated as the start of a sub-list. What a kludge, huh? This is
+	// an aspect of Markdown's syntax that's hard to parse perfectly
+	// without resorting to mind-reading. Perhaps the solution is to
+	// change the syntax rules such that sub-lists must start with a
+	// starting cardinal number; e.g. "1." or "a.".
+
+	g_list_level++;
+
+	// trim trailing blank lines:
+	list_str = list_str.replace(/\n{2,}$/,"\n");
+
+	// attacklab: add sentinel to emulate \z
+	list_str += "~0";
+
+	/*
+		list_str = list_str.replace(/
+			(\n)?							// leading line = $1
+			(^[ \t]*)						// leading whitespace = $2
+			([*+-]|\d+[.]) [ \t]+			// list marker = $3
+			([^\r]+?						// list item text   = $4
+			(\n{1,2}))
+			(?= \n* (~0 | \2 ([*+-]|\d+[.]) [ \t]+))
+		/gm, function(){...});
+	*/
+	list_str = list_str.replace(/(\n)?(^[ \t]*)([*+-]|\d+[.])[ \t]+([^\r]+?(\n{1,2}))(?=\n*(~0|\2([*+-]|\d+[.])[ \t]+))/gm,
+		function(wholeMatch,m1,m2,m3,m4){
+			var item = m4;
+			var leading_line = m1;
+			var leading_space = m2;
+
+			if (leading_line || (item.search(/\n{2,}/)>-1)) {
+				item = _RunBlockGamut(_Outdent(item));
+			}
+			else {
+				// Recursion for sub-lists:
+				item = _DoLists(_Outdent(item));
+				item = item.replace(/\n$/,""); // chomp(item)
+				item = _RunSpanGamut(item);
+			}
+
+			return  "<li>" + item + "</li>\n";
+		}
+	);
+
+	// attacklab: strip sentinel
+	list_str = list_str.replace(/~0/g,"");
+
+	g_list_level--;
+	return list_str;
+}
+
+
+var _DoCodeBlocks = function(text) {
+//
+//  Process Markdown `<pre><code>` blocks.
+//  
+
+	/*
+		text = text.replace(text,
+			/(?:\n\n|^)
+			(								// $1 = the code block -- one or more lines, starting with a space/tab
+				(?:
+					(?:[ ]{4}|\t)			// Lines must start with a tab or a tab-width of spaces - attacklab: g_tab_width
+					.*\n+
+				)+
+			)
+			(\n*[ ]{0,3}[^ \t\n]|(?=~0))	// attacklab: g_tab_width
+		/g,function(){...});
+	*/
+
+	// attacklab: sentinel workarounds for lack of \A and \Z, safari\khtml bug
+	text += "~0";
+	
+	text = text.replace(/(?:\n\n|^)((?:(?:[ ]{4}|\t).*\n+)+)(\n*[ ]{0,3}[^ \t\n]|(?=~0))/g,
+		function(wholeMatch,m1,m2) {
+			var codeblock = m1;
+			var nextChar = m2;
+		
+			codeblock = _EncodeCode( _Outdent(codeblock));
+			codeblock = _Detab(codeblock);
+			codeblock = codeblock.replace(/^\n+/g,""); // trim leading newlines
+			codeblock = codeblock.replace(/\n+$/g,""); // trim trailing whitespace
+
+			codeblock = "<pre><code>" + codeblock + "\n</code></pre>";
+
+			return hashBlock(codeblock) + nextChar;
+		}
+	);
+
+	// attacklab: strip sentinel
+	text = text.replace(/~0/,"");
+
+	return text;
+}
+
+var hashBlock = function(text) {
+	text = text.replace(/(^\n+|\n+$)/g,"");
+	return "\n\n~K" + (g_html_blocks.push(text)-1) + "K\n\n";
+}
+
+
+var _DoCodeSpans = function(text) {
+//
+//   *  Backtick quotes are used for <code></code> spans.
+// 
+//   *  You can use multiple backticks as the delimiters if you want to
+//	 include literal backticks in the code span. So, this input:
+//	 
+//		 Just type ``foo `bar` baz`` at the prompt.
+//	 
+//	   Will translate to:
+//	 
+//		 <p>Just type <code>foo `bar` baz</code> at the prompt.</p>
+//	 
+//	There's no arbitrary limit to the number of backticks you
+//	can use as delimters. If you need three consecutive backticks
+//	in your code, use four for delimiters, etc.
+//
+//  *  You can use spaces to get literal backticks at the edges:
+//	 
+//		 ... type `` `bar` `` ...
+//	 
+//	   Turns to:
+//	 
+//		 ... type <code>`bar`</code> ...
+//
+
+	/*
+		text = text.replace(/
+			(^|[^\\])					// Character before opening ` can't be a backslash
+			(`+)						// $2 = Opening run of `
+			(							// $3 = The code block
+				[^\r]*?
+				[^`]					// attacklab: work around lack of lookbehind
+			)
+			\2							// Matching closer
+			(?!`)
+		/gm, function(){...});
+	*/
+
+	text = text.replace(/(^|[^\\])(`+)([^\r]*?[^`])\2(?!`)/gm,
+		function(wholeMatch,m1,m2,m3,m4) {
+			var c = m3;
+			c = c.replace(/^([ \t]*)/g,"");	// leading whitespace
+			c = c.replace(/[ \t]*$/g,"");	// trailing whitespace
+			c = _EncodeCode(c);
+			return m1+"<code>"+c+"</code>";
+		});
+
+	return text;
+}
+
+
+var _EncodeCode = function(text) {
+//
+// Encode/escape certain characters inside Markdown code runs.
+// The point is that in code, these characters are literals,
+// and lose their special Markdown meanings.
+//
+	// Encode all ampersands; HTML entities are not
+	// entities within a Markdown code span.
+	text = text.replace(/&/g,"&amp;");
+
+	// Do the angle bracket song and dance:
+	text = text.replace(/</g,"&lt;");
+	text = text.replace(/>/g,"&gt;");
+
+	// Now, escape characters that are magic in Markdown:
+	text = escapeCharacters(text,"\*_{}[]\\",false);
+
+// jj the line above breaks this:
+//---
+
+//* Item
+
+//   1. Subitem
+
+//            special char: *
+//---
+
+	return text;
+}
+
+
+var _DoItalicsAndBold = function(text) {
+
+	// <strong> must go first:
+	text = text.replace(/(\*\*|__)(?=\S)([^\r]*?\S[*_]*)\1/g,
+		"<strong>$2</strong>");
+
+	text = text.replace(/(\*|_)(?=\S)([^\r]*?\S)\1/g,
+		"<em>$2</em>");
+
+	return text;
+}
+
+
+var _DoBlockQuotes = function(text) {
+
+	/*
+		text = text.replace(/
+		(								// Wrap whole match in $1
+			(
+				^[ \t]*>[ \t]?			// '>' at the start of a line
+				.+\n					// rest of the first line
+				(.+\n)*					// subsequent consecutive lines
+				\n*						// blanks
+			)+
+		)
+		/gm, function(){...});
+	*/
+
+	text = text.replace(/((^[ \t]*>[ \t]?.+\n(.+\n)*\n*)+)/gm,
+		function(wholeMatch,m1) {
+			var bq = m1;
+
+			// attacklab: hack around Konqueror 3.5.4 bug:
+			// "----------bug".replace(/^-/g,"") == "bug"
+
+			bq = bq.replace(/^[ \t]*>[ \t]?/gm,"~0");	// trim one level of quoting
+
+			// attacklab: clean up hack
+			bq = bq.replace(/~0/g,"");
+
+			bq = bq.replace(/^[ \t]+$/gm,"");		// trim whitespace-only lines
+			bq = _RunBlockGamut(bq);				// recurse
+			
+			bq = bq.replace(/(^|\n)/g,"$1  ");
+			// These leading spaces screw with <pre> content, so we need to fix that:
+			bq = bq.replace(
+					/(\s*<pre>[^\r]+?<\/pre>)/gm,
+				function(wholeMatch,m1) {
+					var pre = m1;
+					// attacklab: hack around Konqueror 3.5.4 bug:
+					pre = pre.replace(/^  /mg,"~0");
+					pre = pre.replace(/~0/g,"");
+					return pre;
+				});
+			
+			return hashBlock("<blockquote>\n" + bq + "\n</blockquote>");
+		});
+	return text;
+}
+
+
+var _FormParagraphs = function(text) {
+//
+//  Params:
+//    $text - string to process with html <p> tags
+//
+
+	// Strip leading and trailing lines:
+	text = text.replace(/^\n+/g,"");
+	text = text.replace(/\n+$/g,"");
+
+	var grafs = text.split(/\n{2,}/g);
+	var grafsOut = new Array();
+
+	//
+	// Wrap <p> tags.
+	//
+	var end = grafs.length;
+	for (var i=0; i<end; i++) {
+		var str = grafs[i];
+
+		// if this is an HTML marker, copy it
+		if (str.search(/~K(\d+)K/g) >= 0) {
+			grafsOut.push(str);
+		}
+		else if (str.search(/\S/) >= 0) {
+			str = _RunSpanGamut(str);
+			str = str.replace(/^([ \t]*)/g,"<p>");
+			str += "</p>"
+			grafsOut.push(str);
+		}
+
+	}
+
+	//
+	// Unhashify HTML blocks
+	//
+	end = grafsOut.length;
+	for (var i=0; i<end; i++) {
+		// if this is a marker for an html block...
+		while (grafsOut[i].search(/~K(\d+)K/) >= 0) {
+			var blockText = g_html_blocks[RegExp.$1];
+			blockText = blockText.replace(/\$/g,"$$$$"); // Escape any dollar signs
+			grafsOut[i] = grafsOut[i].replace(/~K\d+K/,blockText);
+		}
+	}
+
+	return grafsOut.join("\n\n");
+}
+
+
+var _EncodeAmpsAndAngles = function(text) {
+// Smart processing for ampersands and angle brackets that need to be encoded.
+	
+	// Ampersand-encoding based entirely on Nat Irons's Amputator MT plugin:
+	//   http://bumppo.net/projects/amputator/
+	text = text.replace(/&(?!#?[xX]?(?:[0-9a-fA-F]+|\w+);)/g,"&amp;");
+	
+	// Encode naked <'s
+	text = text.replace(/<(?![a-z\/?\$!])/gi,"&lt;");
+	
+	return text;
+}
+
+
+var _EncodeBackslashEscapes = function(text) {
+//
+//   Parameter:  String.
+//   Returns:	The string, with after processing the following backslash
+//			   escape sequences.
+//
+
+	// attacklab: The polite way to do this is with the new
+	// escapeCharacters() function:
+	//
+	// 	text = escapeCharacters(text,"\\",true);
+	// 	text = escapeCharacters(text,"`*_{}[]()>#+-.!",true);
+	//
+	// ...but we're sidestepping its use of the (slow) RegExp constructor
+	// as an optimization for Firefox.  This function gets called a LOT.
+
+	text = text.replace(/\\(\\)/g,escapeCharacters_callback);
+	text = text.replace(/\\([`*_{}\[\]()>#+-.!])/g,escapeCharacters_callback);
+	return text;
+}
+
+
+var _DoAutoLinks = function(text) {
+
+	text = text.replace(/<((https?|ftp|dict):[^'">\s]+)>/gi,"<a href=\"$1\">$1</a>");
+
+	// Email addresses: <address@domain.foo>
+
+	/*
+		text = text.replace(/
+			<
+			(?:mailto:)?
+			(
+				[-.\w]+
+				\@
+				[-a-z0-9]+(\.[-a-z0-9]+)*\.[a-z]+
+			)
+			>
+		/gi, _DoAutoLinks_callback());
+	*/
+	text = text.replace(/<(?:mailto:)?([-.\w]+\@[-a-z0-9]+(\.[-a-z0-9]+)*\.[a-z]+)>/gi,
+		function(wholeMatch,m1) {
+			return _EncodeEmailAddress( _UnescapeSpecialChars(m1) );
+		}
+	);
+
+	return text;
+}
+
+
+var _EncodeEmailAddress = function(addr) {
+//
+//  Input: an email address, e.g. "foo@example.com"
+//
+//  Output: the email address as a mailto link, with each character
+//	of the address encoded as either a decimal or hex entity, in
+//	the hopes of foiling most address harvesting spam bots. E.g.:
+//
+//	<a href="&#x6D;&#97;&#105;&#108;&#x74;&#111;:&#102;&#111;&#111;&#64;&#101;
+//	   x&#x61;&#109;&#x70;&#108;&#x65;&#x2E;&#99;&#111;&#109;">&#102;&#111;&#111;
+//	   &#64;&#101;x&#x61;&#109;&#x70;&#108;&#x65;&#x2E;&#99;&#111;&#109;</a>
+//
+//  Based on a filter by Matthew Wickline, posted to the BBEdit-Talk
+//  mailing list: <http://tinyurl.com/yu7ue>
+//
+
+	// attacklab: why can't javascript speak hex?
+	function char2hex(ch) {
+		var hexDigits = '0123456789ABCDEF';
+		var dec = ch.charCodeAt(0);
+		return(hexDigits.charAt(dec>>4) + hexDigits.charAt(dec&15));
+	}
+
+	var encode = [
+		function(ch){return "&#"+ch.charCodeAt(0)+";";},
+		function(ch){return "&#x"+char2hex(ch)+";";},
+		function(ch){return ch;}
+	];
+
+	addr = "mailto:" + addr;
+
+	addr = addr.replace(/./g, function(ch) {
+		if (ch == "@") {
+		   	// this *must* be encoded. I insist.
+			ch = encode[Math.floor(Math.random()*2)](ch);
+		} else if (ch !=":") {
+			// leave ':' alone (to spot mailto: later)
+			var r = Math.random();
+			// roughly 10% raw, 45% hex, 45% dec
+			ch =  (
+					r > .9  ?	encode[2](ch)   :
+					r > .45 ?	encode[1](ch)   :
+								encode[0](ch)
+				);
+		}
+		return ch;
+	});
+
+	addr = "<a href=\"" + addr + "\">" + addr + "</a>";
+	addr = addr.replace(/">.+:/g,"\">"); // strip the mailto: from the visible part
+
+	return addr;
+}
+
+
+var _UnescapeSpecialChars = function(text) {
+//
+// Swap back in all the special characters we've hidden.
+//
+	text = text.replace(/~E(\d+)E/g,
+		function(wholeMatch,m1) {
+			var charCodeToReplace = parseInt(m1);
+			return String.fromCharCode(charCodeToReplace);
+		}
+	);
+	return text;
+}
+
+
+var _Outdent = function(text) {
+//
+// Remove one level of line-leading tabs or spaces
+//
+
+	// attacklab: hack around Konqueror 3.5.4 bug:
+	// "----------bug".replace(/^-/g,"") == "bug"
+
+	text = text.replace(/^(\t|[ ]{1,4})/gm,"~0"); // attacklab: g_tab_width
+
+	// attacklab: clean up hack
+	text = text.replace(/~0/g,"")
+
+	return text;
+}
+
+var _Detab = function(text) {
+// attacklab: Detab's completely rewritten for speed.
+// In perl we could fix it by anchoring the regexp with \G.
+// In javascript we're less fortunate.
+
+	// expand first n-1 tabs
+	text = text.replace(/\t(?=\t)/g,"    "); // attacklab: g_tab_width
+
+	// replace the nth with two sentinels
+	text = text.replace(/\t/g,"~A~B");
+
+	// use the sentinel to anchor our regex so it doesn't explode
+	text = text.replace(/~B(.+?)~A/g,
+		function(wholeMatch,m1,m2) {
+			var leadingText = m1;
+			var numSpaces = 4 - leadingText.length % 4;  // attacklab: g_tab_width
+
+			// there *must* be a better way to do this:
+			for (var i=0; i<numSpaces; i++) leadingText+=" ";
+
+			return leadingText;
+		}
+	);
+
+	// clean up sentinels
+	text = text.replace(/~A/g,"    ");  // attacklab: g_tab_width
+	text = text.replace(/~B/g,"");
+
+	return text;
+}
+
+
+//
+//  attacklab: Utility functions
+//
+
+
+var escapeCharacters = function(text, charsToEscape, afterBackslash) {
+	// First we have to escape the escape characters so that
+	// we can build a character class out of them
+	var regexString = "([" + charsToEscape.replace(/([\[\]\\])/g,"\\$1") + "])";
+
+	if (afterBackslash) {
+		regexString = "\\\\" + regexString;
+	}
+
+	var regex = new RegExp(regexString,"g");
+	text = text.replace(regex,escapeCharacters_callback);
+
+	return text;
+}
+
+
+var escapeCharacters_callback = function(wholeMatch,m1) {
+	var charCodeToEscape = m1.charCodeAt(0);
+	return "~E"+charCodeToEscape+"E";
+}
+
+exports.markdown = exports.Markdown = exports.encode = exports.parse = exports.makeHtml

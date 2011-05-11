@@ -1,7 +1,3 @@
-* {
-  font-family: Sans;
-}
-
 html, body {
   margin: 0;
   padding: 0;
@@ -32,13 +28,20 @@ body {
 }
 
 #source, #preview, #url {
-  font-size: 11pt;
-  border: 1px solid grey;
-  padding: 2pt;
-  width: 100%;
-  opacity: 0.8;
   border-radius: 4px;
   margin-top: 10pt;
+  opacity: 0.9;
+}
+
+#preview, #url {
+  padding: 2pt;
+  font-size: 11pt;
+  border: 1px solid grey;
+  width: 100%;
+}
+
+#preview {
+  padding: 5pt;
 }
 
 .loading {
@@ -51,11 +54,8 @@ body {
   height: 80%;
 }
 
-#source::selection {
-  background-color: black;
-}
-
 #preview {
+  font-family: Sans;
   float: right;
   margin-right: auto;
 }
