@@ -9,7 +9,7 @@ get '/sftp/put/*' do
     begin
       io = StringIO.new(params[:content])
       sftp.upload!(io, params[:splat][0])
-    rescue StatusException=>e
+    rescue Exception=>e
       sftp.mkdir! File.dirname(params[:splat][0])
       io = StringIO.new(params[:content])
       sftp.upload!(io, params[:splat][0])
