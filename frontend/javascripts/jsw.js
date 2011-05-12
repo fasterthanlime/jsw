@@ -20,6 +20,9 @@ var jsw = {
   /* false if we have unsaved changes we might lose when  */
   clean: true,
   
+  lastMd: "load a markdown page to test your css on!",
+  lastMdUrl: "index",
+  
   /* TODO: make it modular */
   header: '<!DOCTYPE html><html><head><link rel="stylesheet" href="/stylesheets/main.css"></head><body><div id="content">',
   footer: '</div><div id="footer">powered by <a href="https://github.com/nddrylliog/jsw">jsw</a></div></body></html>',
@@ -52,28 +55,45 @@ var jsw = {
     return (jsw.page().indexOf('.') == -1);
   },
   
+  isCss: function () {
+    var page = jsw.page();
+    return (page.slice(page.length - 4) == '.css');
+  },
+  
   /* Render the source for preview */
   render: function () {
     var source = jsw.getSource();
     if(jsw.isMarkdown()) {
-      source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
+      jsw.lastMdUrl = jsw.page();
+      jsw.lastMd = source;
+      jsw.renderMarkdownPreview(source);
+    } else if(jsw.isCss()) {
+      jsw.renderMarkdownPreview(jsw.lastMd);
+      $('#preview').html('<style type="text/css">' + jsw.filterCss(jsw.getSource()) + '</style>' + $('#preview').html());
+    } else {
+      $('#preview').html("<pre>" + jsw.getSource() + "</pre>");
+    }
+  },
+  
+  filterCss: function (source) {
+    return source.replace(/html/g, '#preview').replace(/body/g, '#preview').replace(/#content/g, '#preview');
+  },
+  
+  renderMarkdownPreview: function (source) {
+    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
       var html = jsw.converter.makeHtml(source);
       $("#preview").html(html);
-      $('#preview a[href^="' + jsw.admin_root + '"]').css('color', 'red').click(function (e) {
+      $('#preview a[href^="' + jsw.admin_root + '"]').click(function (e) {
         if(e.button == 0 && !e.ctrlKey) {
           // on left button clicks, load in-app. still allow middle clicks to open new tabs
           jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
           return false;
         }
       });
-    } else {
-      $('#preview').html("<pre>" + jsw.getSource() + "</pre>");
-    }
   },
   
   /* Render the source for upload */
-  final_render: function () {
-    var source = jsw.getSource();
+  renderMarkdown: function (source) {
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](/$1)");
     return jsw.header + jsw.converter.makeHtml(source) + jsw.footer;
   },
@@ -134,7 +154,7 @@ var jsw = {
         url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".htm",
         dataType: "jsonp text",
         data: {
-          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : jsw.final_render()
+          host: jsw.ftp_host, username: $("#username").val(), password: $("#password").val(), content : jsw.renderMarkdown(jsw.getSource())
         },
         complete: function () {
           if (done == 1) { finish(); } else { done++; }
@@ -174,10 +194,13 @@ $(function() {
     // markdown
     jsw.converter = new Showdown.converter();
   
-    // ace editor integration
+    // ace editor
     jsw.editor = ace.edit('source');
     jsw.session = jsw.editor.getSession();
     jsw.session.setUseWrapMode(true);
+    jsw.editor.setHighlightActiveLine(true);
+    jsw.session.setTabSize(2);
+    jsw.session.setUseSoftTabs(true);
     jsw.session.on('change', jsw.updateClean);
         
     jsw.setSource = function (value) {
@@ -222,6 +245,9 @@ $(function() {
     
     // Ctrl+L = focus URL bar
     $.ctrl('L', function() { $("#url").focus().select(); });
+    
+    // Ctrl+K = edit CSS
+    $.ctrl('K', function() { if(jsw.isCss()) { jsw.goto(jsw.lastMdUrl) } else { jsw.goto('stylesheets/main.css') }; });
     
     // navigation
     $("#url").keydown(function (ev) {

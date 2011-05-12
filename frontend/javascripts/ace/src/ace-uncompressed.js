@@ -7210,16 +7210,6 @@ canon.addCommand({
     exec: function(env, args, request) { env.editor.toggleCommentLines(); }
 });
 canon.addCommand({
-    name: "findnext",
-    bindKey: bindKey("Ctrl-K", "Command-G"),
-    exec: function(env, args, request) { env.editor.findNext(); }
-});
-canon.addCommand({
-    name: "findprevious",
-    bindKey: bindKey("Ctrl-Shift-K", "Command-Shift-G"),
-    exec: function(env, args, request) { env.editor.findPrevious(); }
-});
-canon.addCommand({
     name: "find",
     bindKey: bindKey("Ctrl-F", "Command-F"),
     exec: function(env, args, request) {
