@@ -80,21 +80,31 @@ var jsw = {
   },
   
   renderMarkdownPreview: function (source) {
-    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](" + jsw.admin_root + "$1)");
-      var html = jsw.converter.makeHtml(source);
-      $("#preview").html(html);
-      $('#preview a[href^="' + jsw.admin_root + '"]').click(function (e) {
-        if(e.button == 0 && !e.ctrlKey) {
-          // on left button clicks, load in-app. still allow middle clicks to open new tabs
-          jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
-          return false;
-        }
-      });
+    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/\-]*)(\[(.*)\])?/g, function (m, page, parens, name) {
+      if (name.length == 0) {
+        name = page.replace(/_/g, ' ');
+      }
+      return "[" + name + "](" + jsw.admin_root + page + ")"
+    });
+    var html = jsw.converter.makeHtml(source);
+    $("#preview").html(html);
+    $('#preview a[href^="' + jsw.admin_root + '"]').click(function (e) {
+      if(e.button == 0 && !e.ctrlKey) {
+        // on left button clicks, load in-app. still allow middle clicks to open new tabs
+        jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
+        return false;
+      }
+    });
   },
   
   /* Render the source for upload */
   renderMarkdown: function (source) {
-    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/]*)/g, "[$1](/$1)");
+    source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/\-]*)(\[(.*)\])?/g, function (m, page, parens, name) {
+      if (name.length == 0) {
+        name = page.replace(/_/g, ' ');
+      }
+      return "[" + name + "](/" + page + ")"
+    });
     return jsw.header + jsw.converter.makeHtml(source) + jsw.footer;
   },
   
