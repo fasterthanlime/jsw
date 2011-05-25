@@ -105,7 +105,7 @@ var jsw = {
     $('#preview a[href^="' + jsw.admin_root + '"]').click(function (e) {
       if(e.button == 0 && !e.ctrlKey) {
         // on left button clicks, load in-app. still allow middle clicks to open new tabs
-        jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
+        jsw.goTo($(this).attr("href").slice(jsw.admin_root.length));
         return false;
       }
     });
@@ -129,7 +129,7 @@ var jsw = {
   },
   
   /* Go to a page, given its path. Changes the URL, loads the content from the backend */
-  goto: function (page) {
+  goTo: function (page) {
     $("#url").val(page);
     $("#source").attr("disabled", true);
     
@@ -237,7 +237,7 @@ $(function() {
     };
     
     window.onpopstate = function (event) {
-      jsw.goto(jsw.page());
+      jsw.goTo(jsw.page());
     };
     
     // login window hacks
@@ -260,9 +260,9 @@ $(function() {
     };
     
     if(jsw.page().length == 0) {
-        jsw.goto("index");
+        jsw.goTo("index");
     } else {
-        jsw.goto(jsw.page());
+        jsw.goTo(jsw.page());
     }
     
     // Ctrl+S = save
@@ -272,12 +272,12 @@ $(function() {
     $.ctrl('L', function() { $("#url").focus().select(); });
     
     // Ctrl+K = edit CSS
-    $.ctrl('K', function() { if(jsw.isCss()) { jsw.goto(jsw.lastMdUrl); } else { jsw.goto('stylesheets/main.css'); }; });
+    $.ctrl('K', function() { if(jsw.isCss()) { jsw.goTo(jsw.lastMdUrl); } else { jsw.goTo('stylesheets/main.css'); }; });
     
     // navigation
     $("#url").keydown(function (ev) {
         if (ev.which == 13) {
-          jsw.goto($("#url").val());
+          jsw.goTo($("#url").val());
         }
     });
     
