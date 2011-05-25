@@ -98,7 +98,7 @@ var jsw = {
       if (name.length == 0) {
         name = page.replace(/_/g, ' ');
       }
-      return "[" + name + "](" + jsw.admin_root + page + ")"
+      return "[" + name + "](" + jsw.admin_root + page + ")";
     });
     var html = jsw.converter.makeHtml(source);
     $("#preview").html(html);
@@ -117,7 +117,7 @@ var jsw = {
       if (name.length == 0) {
         name = page.replace(/_/g, ' ');
       }
-      return "[" + name + "](/" + page + ")"
+      return "[" + name + "](/" + page + ")";
     });
     return jsw.header + jsw.converter.makeHtml(source) + jsw.footer;
   },
@@ -141,7 +141,7 @@ var jsw = {
       }, "", jsw.admin_root + page);
     }
     
-    var page_path = jsw.page()
+    var page_path = jsw.page();
     if(page_path.indexOf('.') == -1) {
       page_path += '.md';
     }
@@ -170,9 +170,9 @@ var jsw = {
     var finish = function () {
       $("#save").html('save').attr("disabled", false);
       $("#source").removeClass('loading');
-    }
+    };
     
-    var page_path = jsw.page()
+    var page_path = jsw.page();
     if(page_path.indexOf('.') == -1) {
       $.ajax({
         type: "GET",
@@ -230,11 +230,11 @@ $(function() {
         
     jsw.setSource = function (value) {
       jsw.session.setValue(value);
-    }
+    };
     
     jsw.getSource = function () {
       return jsw.session.getValue();
-    }
+    };
     
     window.onpopstate = function (event) {
       jsw.goto(jsw.page());
@@ -272,7 +272,7 @@ $(function() {
     $.ctrl('L', function() { $("#url").focus().select(); });
     
     // Ctrl+K = edit CSS
-    $.ctrl('K', function() { if(jsw.isCss()) { jsw.goto(jsw.lastMdUrl) } else { jsw.goto('stylesheets/main.css') }; });
+    $.ctrl('K', function() { if(jsw.isCss()) { jsw.goto(jsw.lastMdUrl); } else { jsw.goto('stylesheets/main.css'); }; });
     
     // navigation
     $("#url").keydown(function (ev) {
@@ -296,7 +296,7 @@ $(function() {
     
     // logout
     $("#logout").click(function () {
-      $("#coords").css("display", "block")
+      $("#coords").css("display", "block");
       $("#password").val("");
       $("#username").val("").focus();
       return false;
