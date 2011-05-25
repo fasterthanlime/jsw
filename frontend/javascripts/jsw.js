@@ -1,4 +1,3 @@
-
 // Courtesy of https://github.com/kriskowal/es5-shim by Kris Kowal
 if( !String.prototype.trim )
 {
@@ -95,7 +94,7 @@ var jsw = {
   
   renderMarkdownPreview: function (source) {
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/\-]*)(\[(.*)\])?/g, function (m, page, parens, name) {
-      if (name.length == 0) {
+      if (typeof(name) == "undefined" || name.length == 0) {
         name = page.replace(/_/g, ' ');
       }
       return "[" + name + "](" + jsw.admin_root + page + ")";
@@ -114,7 +113,7 @@ var jsw = {
   /* Render the source for upload */
   renderMarkdown: function (source) {
     source = source.replace(/\$([A-Za-z_][A-Za-z0-9_\/\-]*)(\[(.*)\])?/g, function (m, page, parens, name) {
-      if (name.length == 0) {
+      if (typeof(name) == "undefined" || name.length == 0) {
         name = page.replace(/_/g, ' ');
       }
       return "[" + name + "](/" + page + ")";
