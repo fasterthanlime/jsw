@@ -1,3 +1,17 @@
+
+// Courtesy of https://github.com/kriskowal/es5-shim by Kris Kowal
+if( !String.prototype.trim )
+{
+    // http://blog.stevenlevithan.com/archives/faster-trim-javascript
+    var trimBeginRegexp = /^\s\s*/;
+    var trimEndRegexp   = /\s\s*$/;
+    
+    String.prototype.trim = function()
+    {
+        return String( this ).replace( trimBeginRegexp, '' ).replace( trimEndRegexp, '' );
+    };
+}
+
 var jsw = {    
   /* SFTP host you want to upload HTML files to */
   ftp_host: "ftp.jrcfoto.com",
@@ -84,14 +98,14 @@ var jsw = {
       if (name.length == 0) {
         name = page.replace(/_/g, ' ');
       }
-      return "[" + name + "](" + jsw.admin_root + page + ")"
+      return "[" + name + "](" + jsw.admin_root + page + ")";
     });
     var html = jsw.converter.makeHtml(source);
     $("#preview").html(html);
     $('#preview a[href^="' + jsw.admin_root + '"]').click(function (e) {
       if(e.button == 0 && !e.ctrlKey) {
         // on left button clicks, load in-app. still allow middle clicks to open new tabs
-        jsw.goto($(this).attr("href").slice(jsw.admin_root.length));
+        jsw.goTo($(this).attr("href").slice(jsw.admin_root.length));
         return false;
       }
     });
@@ -103,18 +117,19 @@ var jsw = {
       if (name.length == 0) {
         name = page.replace(/_/g, ' ');
       }
-      return "[" + name + "](/" + page + ")"
+      return "[" + name + "](/" + page + ")";
     });
     return jsw.header + jsw.converter.makeHtml(source) + jsw.footer;
   },
   
   /* Return current page path, based on current URL */
   page: function () {
-    return document.location.href.slice(jsw.admin_root.length);
+    // return document.location.href.slice(jsw.admin_root.length);
+    return location.pathname.trim( '/' );
   },
   
   /* Go to a page, given its path. Changes the URL, loads the content from the backend */
-  goto: function (page) {
+  goTo: function (page) {
     $("#url").val(page);
     $("#source").attr("disabled", true);
     
@@ -126,7 +141,7 @@ var jsw = {
       }, "", jsw.admin_root + page);
     }
     
-    var page_path = jsw.page()
+    var page_path = jsw.page();
     if(page_path.indexOf('.') == -1) {
       page_path += '.md';
     }
@@ -155,9 +170,9 @@ var jsw = {
     var finish = function () {
       $("#save").html('save').attr("disabled", false);
       $("#source").removeClass('loading');
-    }
+    };
     
-    var page_path = jsw.page()
+    var page_path = jsw.page();
     if(page_path.indexOf('.') == -1) {
       $.ajax({
         type: "GET",
@@ -215,14 +230,14 @@ $(function() {
         
     jsw.setSource = function (value) {
       jsw.session.setValue(value);
-    }
+    };
     
     jsw.getSource = function () {
       return jsw.session.getValue();
-    }
+    };
     
     window.onpopstate = function (event) {
-      jsw.goto(jsw.page());
+      jsw.goTo(jsw.page());
     };
     
     // login window hacks
@@ -245,9 +260,9 @@ $(function() {
     };
     
     if(jsw.page().length == 0) {
-        jsw.goto("index");
+        jsw.goTo("index");
     } else {
-        jsw.goto(jsw.page());
+        jsw.goTo(jsw.page());
     }
     
     // Ctrl+S = save
@@ -257,12 +272,12 @@ $(function() {
     $.ctrl('L', function() { $("#url").focus().select(); });
     
     // Ctrl+K = edit CSS
-    $.ctrl('K', function() { if(jsw.isCss()) { jsw.goto(jsw.lastMdUrl) } else { jsw.goto('stylesheets/main.css') }; });
+    $.ctrl('K', function() { if(jsw.isCss()) { jsw.goTo(jsw.lastMdUrl); } else { jsw.goTo('stylesheets/main.css'); }; });
     
     // navigation
     $("#url").keydown(function (ev) {
         if (ev.which == 13) {
-          jsw.goto($("#url").val());
+          jsw.goTo($("#url").val());
         }
     });
     
@@ -281,7 +296,7 @@ $(function() {
     
     // logout
     $("#logout").click(function () {
-      $("#coords").css("display", "block")
+      $("#coords").css("display", "block");
       $("#password").val("");
       $("#username").val("").focus();
       return false;
