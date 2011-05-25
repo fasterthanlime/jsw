@@ -1,3 +1,17 @@
+
+// Courtesy of https://github.com/kriskowal/es5-shim by Kris Kowal
+if( !String.prototype.trim )
+{
+    // http://blog.stevenlevithan.com/archives/faster-trim-javascript
+    var trimBeginRegexp = /^\s\s*/;
+    var trimEndRegexp   = /\s\s*$/;
+    
+    String.prototype.trim = function()
+    {
+        return String( this ).replace( trimBeginRegexp, '' ).replace( trimEndRegexp, '' );
+    };
+}
+
 var jsw = {    
   /* SFTP host you want to upload HTML files to */
   ftp_host: "ftp.jrcfoto.com",
@@ -110,7 +124,8 @@ var jsw = {
   
   /* Return current page path, based on current URL */
   page: function () {
-    return document.location.href.slice(jsw.admin_root.length);
+    // return document.location.href.slice(jsw.admin_root.length);
+    return location.pathname.trim( '/' );
   },
   
   /* Go to a page, given its path. Changes the URL, loads the content from the backend */
