@@ -174,7 +174,7 @@ var jsw = {
     var page_path = jsw.page();
     if(page_path.indexOf('.') == -1) {
       $.ajax({
-        type: "GET",
+        type: "POST",
         url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".htm",
         dataType: "jsonp text",
         data: {
@@ -186,7 +186,7 @@ var jsw = {
       });
       
       $.ajax({
-        type: "GET",
+        type: "POST",
         url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page() + ".md",
         dataType: "jsonp text",
         data: {
@@ -198,7 +198,7 @@ var jsw = {
       });
     } else {
       $.ajax({
-        type: "GET",
+        type: "POST",
         url: jsw.backend + "sftp/put/" + jsw.ftp_directory + jsw.page(),
         dataType: "jsonp text",
         data: {
